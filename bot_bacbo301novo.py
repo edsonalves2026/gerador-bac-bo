@@ -210,10 +210,9 @@ def enviar_mensagem_telegram(texto: str) -> bool:
         return False
 
 # -----------------------------------------------------------------------------
-# 🔌 BUSCA DE DADOS — API (ATUALIZADA)
+# 🔌 BUSCA DE DADOS — API (LOGS DE RESULTADO ESTILO TERMINAL)
 # -----------------------------------------------------------------------------
 def buscar_historico_api():
-    # URL dinâmica configurada com ID da Mesa e parâmetro de anti-cache (_cb)
     url = (
         f"https://api.core.public.tipminer.com/v1/bac-bo/rounds/{CONFIG['MESA_ID']}/history"
         f"?limit={CONFIG['LIMITE_RODADAS']}"
@@ -230,9 +229,11 @@ def buscar_historico_api():
 
     try:
         response = requests.get(url, headers=headers, timeout=CONFIG["TIMEOUT_API"])
-        registrar_log(f"🔗 Status da API: {response.status_code}", CoresTerminal.CIANO)
         
-        response.raise_for_status()
+        if response.status_code != 200:
+            registrar_log(f"🔗 Status da API: {response.status_code}", CoresTerminal.CIANO)
+            return [], [], []
+
         dados = response.json()
 
         if not isinstance(dados, list):
@@ -260,9 +261,17 @@ def buscar_historico_api():
             uuids.append(uuid_rodada)
             pontos.append(ponto)
 
-        if uuids:
-            registrar_log(f"✅ {len(uuids)} rodadas carregadas com sucesso!", CoresTerminal.VERDE)
-        return cores[::-1], uuids[::-1], pontos[::-1]
+        cores = cores[::-1]
+        uuids = uuids[::-1]
+        pontos = pontos[::-1]
+
+        # Apresentação do resultado no log apenas ao identificar uma nova rodada
+        if uuids and uuids[-1] != st.session_state.ultimo_uuid_processado:
+            ultimo_cor = cores[-1]
+            ultimo_ponto = pontos[-1]
+            registrar_log(f"🔄 Nova rodada: {ultimo_cor} ({ultimo_ponto})", CoresTerminal.AZUL)
+
+        return cores, uuids, pontos
 
     except Exception as e:
         registrar_log(f"❌ Erro na API: {str(e)[:80]}", CoresTerminal.VERMELHO)
@@ -401,7 +410,6 @@ def processar_rodada():
     cores, uuids, _ = buscar_historico_api()
 
     if not uuids:
-        registrar_log("⏳ Aguardando dados da API...", CoresTerminal.AMARELO)
         return
 
     uuid_atual = uuids[-1]
@@ -411,7 +419,6 @@ def processar_rodada():
 
     st.session_state.ultimo_uuid_processado = uuid_atual
     ultimo_resultado = cores[-1]
-    registrar_log(f"🔄 Nova rodada: {ultimo_resultado} | UUID: {uuid_atual[:12]}...", CoresTerminal.CIANO)
 
     if st.session_state.sinal_ativo:
         verificar_resultado(ultimo_resultado)
