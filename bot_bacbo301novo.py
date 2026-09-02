@@ -111,13 +111,18 @@ with st.sidebar.form("form_novo_padrao", clear_on_submit=True):
         "Sequência (separada por vírgula)", 
         placeholder="Ex: 🔴 10, 🔵 8 ou 🔴, 🔴"
     )
-    sugestao_entrada = st.selectbox("Entrada Recomendada", ["🔴 BANKER", "🔵 PLAYER"])
+    sugestao_entrada = st.selectbox("Entrada Recomendada", ["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"])
     btn_salvar = st.form_submit_button("➕ Salvar Padrão Fixo")
 
     if btn_salvar and sequencia_input and nome_padrao:
         lista_seq = [item.strip() for item in sequencia_input.split(",")]
-        cor_sugestao = "🔴" if "BANKER" in sugestao_entrada else "🔵"
-        nome_sugestao = "BANKER" if "BANKER" in sugestao_entrada else "PLAYER"
+        
+        if "BANKER" in sugestao_entrada:
+            cor_sugestao, nome_sugestao = "🔴", "BANKER"
+        elif "PLAYER" in sugestao_entrada:
+            cor_sugestao, nome_sugestao = "🔵", "PLAYER"
+        else:
+            cor_sugestao, nome_sugestao = "🟡", "TIE"
 
         st.session_state.PADROES_MANUAIS_COMPOSTOS[nome_padrao] = {
             "padrao": lista_seq,
@@ -483,30 +488,66 @@ def verificar_radar_tie_aquecido(historico_cores: list, uuid_atual: str):
 # -----------------------------------------------------------------------------
 # ✅ VERIFICAÇÃO DE RESULTADO
 # -----------------------------------------------------------------------------
-def verificar_resultado(ultimo_resultado: str):
+def verificar_resultado(ultimo_resultado: str, ponto_resultado: int = None):
     if not st.session_state.sinal_ativo:
         return
 
     esperado = st.session_state.sugestao_atual
     padrao_usado = st.session_state.padrao_selecionado
+    eh_sugestao_tie = (esperado == "🟡")
     acertou = (ultimo_resultado == esperado) or (ultimo_resultado == "🟡")
+
+    texto_resultado_com_ponto = (
+        f"{ultimo_resultado} ({ponto_resultado})" if ponto_resultado is not None else ultimo_resultado
+    )
 
     if acertou:
         tipo_win = "WIN_TIE" if ultimo_resultado == "🟡" else ("WIN" if st.session_state.tentativa == 1 else "WIN_G1")
         registrar_resultado(tipo_win, padrao_usado)
         
-        txt_win = "GREEN DE PRIMEIRA! 🟡" if tipo_win == "WIN_TIE" else ("WIN DIRETO! 🎯" if tipo_win == "WIN" else "WIN NO GALE 1! 🎯")
-        enviar_mensagem_telegram(f"✅ *{txt_win}*\nResultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}")
+        # 🟡 REGRA ESPECIAL DE ENTRADA SUGERIDA EM TIE
+        if eh_sugestao_tie:
+            if st.session_state.tentativa == 1:
+                enviar_mensagem_telegram(
+                    f"🏆 *VICTORY TIE BRK*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}"
+                )
+            else:
+                registrar_log("TIE acertado no Gale (Silencioso - sem mensagem no Telegram).", CoresTerminal.AMARELO)
+
+        # 🔴/🔵 REGRAS NORMAIS (BANKER / PLAYER)
+        else:
+            if tipo_win == "WIN_TIE":
+                txt_win = f"WIN_TIE {texto_resultado_com_ponto}"
+            elif tipo_win == "WIN":
+                txt_win = "WIN DIRETO! 🎯"
+            else:
+                txt_win = "WIN NO GALE 1! 🎯"
+
+            enviar_mensagem_telegram(
+                f"✅ *{txt_win}*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}"
+            )
         
         st.session_state.sinal_ativo = False
         st.session_state.padrao_selecionado = None
 
     elif st.session_state.tentativa == 1:
         st.session_state.tentativa = 2
-        enviar_mensagem_telegram(f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}")
+        
+        if not eh_sugestao_tie:
+            enviar_mensagem_telegram(f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}")
+        else:
+            registrar_log("Sugestão TIE errou a 1ª tentativa (Silencioso - sem Gale no Telegram).", CoresTerminal.AMARELO)
+
     else:
         registrar_resultado("LOSS", padrao_usado)
-        enviar_mensagem_telegram(f"❌ *LOSS CONFIRMADO*\nResultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}")
+        
+        if not eh_sugestao_tie:
+            enviar_mensagem_telegram(
+                f"❌ *LOSS CONFIRMADO*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}"
+            )
+        else:
+            registrar_log("Sugestão TIE deu LOSS (Silencioso - sem mensagem no Telegram).", CoresTerminal.VERMELHO)
+
         st.session_state.sinal_ativo = False
         st.session_state.padrao_selecionado = None
 
@@ -524,11 +565,12 @@ def processar_rodada():
         registrar_log(f"Nova rodada: {exibicao[-1]}", CoresTerminal.AZUL)
 
     ultimo_resultado = cores[-1]
+    ultimo_ponto = pontos[-1]
 
     verificar_radar_tie_aquecido(cores, uuid_atual)
 
     if st.session_state.sinal_ativo:
-        verificar_resultado(ultimo_resultado)
+        verificar_resultado(ultimo_resultado, ultimo_ponto)
 
     if not st.session_state.sinal_ativo:
         sugestao, prob30, prob50, padrao = analisar_multi_amostra(cores, compostos)
@@ -540,7 +582,12 @@ def processar_rodada():
             st.session_state.padrao_selecionado = padrao
             st.session_state.ultimo_uuid_sinal_enviado = uuid_atual
 
-            nome_cor = "🔴 BANKER" if sugestao == "🔴" else "🔵 PLAYER"
+            if sugestao == "🔴":
+                nome_cor = "🔴 BANKER"
+            elif sugestao == "🔵":
+                nome_cor = "🔵 PLAYER"
+            else:
+                nome_cor = "🟡 TIE"
             
             mensagem = (
                 "🤖 *BAC BO PRO - SINAL VIP CONFIRMADO*\n\n"
