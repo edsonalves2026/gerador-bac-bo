@@ -187,12 +187,24 @@ def formatar_ranking_telegram() -> str:
 # -----------------------------------------------------------------------------
 # ✉️ ENVIO DE MENSAGENS — TELEGRAM
 # -----------------------------------------------------------------------------
+
 def enviar_mensagem_telegram(texto: str) -> bool:
-    if not texto or not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        registrar_log("⚠️ Mensagem vazia ou credenciais incompletas", CoresTerminal.AMARELO)
+    if not texto:
+        registrar_log("⚠️ Mensagem vazia", CoresTerminal.AMARELO)
         return False
 
+    if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 20:
+        registrar_log("❌ TELEGRAM_TOKEN está vazio ou inválido!", CoresTerminal.VERMELHO)
+        return False
+
+    if not TELEGRAM_CHAT_ID:
+        registrar_log("❌ TELEGRAM_CHAT_ID não configurado!", CoresTerminal.VERMELHO)
+        return False
+
+    # ✅ URL MONTADA CORRETAMENTE
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    registrar_log(f"🔗 URL Telegram: {url[:50]}...", CoresTerminal.CIANO)
+
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": texto,
@@ -201,12 +213,30 @@ def enviar_mensagem_telegram(texto: str) -> bool:
     }
 
     try:
-        response = requests.post(url, json=payload, timeout=CONFIG["TIMEOUT_TELEGRAM"])
+        response = requests.post(
+            url,
+            json=payload,
+            timeout=CONFIG["TIMEOUT_TELEGRAM"]
+        )
+
+        if response.status_code == 404:
+            registrar_log("❌ ERRO 404 → Token INVÁLIDO! Verifique o TELEGRAM_TOKEN", CoresTerminal.VERMELHO)
+            return False
+
+        if response.status_code == 401:
+            registrar_log("❌ ERRO 401 → Token inválido ou expirado", CoresTerminal.VERMELHO)
+            return False
+
+        if response.status_code == 400:
+            registrar_log("❌ ERRO 400 → Chat ID inválido ou bot não no grupo", CoresTerminal.VERMELHO)
+            return False
+
         response.raise_for_status()
-        registrar_log("✅ Mensagem enviada ao Telegram", CoresTerminal.VERDE)
+        registrar_log("✅ Mensagem enviada ao Telegram!", CoresTerminal.VERDE)
         return True
+
     except Exception as e:
-        registrar_log(f"❌ Erro Telegram: {str(e)[:60]}", CoresTerminal.VERMELHO)
+        registrar_log(f"❌ Falha: {str(e)[:80]}", CoresTerminal.VERMELHO)
         return False
 
 # -----------------------------------------------------------------------------
