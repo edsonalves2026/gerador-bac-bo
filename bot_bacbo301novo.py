@@ -6,7 +6,7 @@ import requests
 import streamlit as st
 
 # -----------------------------------------------------------------------------
-# 🖨️ FUNÇÃO DE LOG COLORIDO NO TERMINAL (VS Code)
+# 🖨️ LOG COLORIDO NO TERMINAL
 # -----------------------------------------------------------------------------
 class CoresTerminal:
     AZUL = "\033[94m"
@@ -17,7 +17,6 @@ class CoresTerminal:
     RESET = "\033[0m"
 
 def log_terminal(mensagem: str, cor: str = CoresTerminal.RESET):
-    """Exibe log formatado no terminal do VS Code com cores."""
     horario = datetime.now().strftime('%H:%M:%S')
     linha = f"{cor}[{horario}] {mensagem}{CoresTerminal.RESET}"
     print(linha)
@@ -32,25 +31,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- CARREGAMENTO SEGURO DE CREDENCIAIS ---
 @st.cache_resource
 def carregar_credenciais():
     try:
         return st.secrets["TELEGRAM_TOKEN"], st.secrets["TELEGRAM_CHAT_ID"]
     except (KeyError, Exception):
-        log_terminal("⚠️ Credenciais não configuradas! Verifique secrets.toml", CoresTerminal.AMARELO)
+        log_terminal("⚠️ Credenciais não configuradas no secrets.toml", CoresTerminal.AMARELO)
         st.error("⚠️ Credenciais do Telegram não configuradas!")
         st.stop()
 
 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = carregar_credenciais()
 
 # -----------------------------------------------------------------------------
-# 🎛️ PAINEL DE CONTROLES VISUAIS (NA INTERFACE)
+# 🎛️ PAINEL DE CONTROLE (INTERFACE)
 # -----------------------------------------------------------------------------
 st.sidebar.title("🎛️ Painel de Controle")
 
 INTERVALO_VERIFICACAO = st.sidebar.slider(
-    "⏱️ Intervalo de Verificação (segundos)",
+    "⏱️ Intervalo de Verificação (s)",
     min_value=2, max_value=30, value=5, step=1
 )
 
@@ -61,7 +59,12 @@ SENSIBILIDADE_MINIMA = st.sidebar.slider(
 
 TAMANHO_PADRAO = st.sidebar.slider(
     "📏 Tamanho do Padrão (rodadas)",
-    min_value=2, max_value=8, value=4, step=1
+    min_value=2, max_value=8, value=3, step=1
+)
+
+MIN_OPERACOES_RANKING = st.sidebar.number_input(
+    "🏆 Mínimo de Amostras p/ Ranking",
+    min_value=1, max_value=10, value=3
 )
 
 st.sidebar.divider()
@@ -75,15 +78,36 @@ CONFIG = {
     "INTERVALO_VERIFICACAO": INTERVALO_VERIFICACAO,
     "SENSIBILIDADE_MINIMA": SENSIBILIDADE_MINIMA,
     "TAMANHO_PADRAO": TAMANHO_PADRAO,
+    "MIN_OPERACOES_RANKING": MIN_OPERACOES_RANKING,
     "LIMITE_RODADAS": 200,
-    "MAX_GALE": 2,
+    "MAX_GALE": 1,
     "TIMEZONE": "America/Sao_Paulo",
     "TIMEOUT_API": 10,
     "TIMEOUT_TELEGRAM": 5
 }
 
 # -----------------------------------------------------------------------------
-# 🧠 INICIALIZAÇÃO DE ESTADOS
+# 🎯 PADRÕES MANUAIS COMPOSTOS
+# -----------------------------------------------------------------------------
+PADROES_MANUAIS_COMPOSTOS = {
+    "composto_manual_1": {
+        "padrao": ["BANKER_11", "PLAYER_8", "BANKER_11"],
+        "sugestao": "🔵",
+        "nome_sugestao": "PLAYER",
+        "ativo": True,
+        "tamanho_padrao": 3
+    },
+    "composto_manual_2": {
+        "padrao": ["PLAYER_8", "BANKER_11", "PLAYER_8"],
+        "sugestao": "🔴",
+        "nome_sugestao": "BANKER",
+        "ativo": True,
+        "tamanho_padrao": 3
+    }
+}
+
+# -----------------------------------------------------------------------------
+# 🧠 ESTADOS
 # -----------------------------------------------------------------------------
 def inicializar_estados():
     estados = {
@@ -92,7 +116,11 @@ def inicializar_estados():
         "tentativa": 0,
         "ultimo_uuid_processado": None,
         "ultimo_uuid_sinal_enviado": None,
+        "ultimo_uuid_tie_enviado": None,
+        "ultimo_uuid_tie_direto_enviado": None,
         "historico_sinais": [],
+        "historico_ciclo": [],
+        "historico_usos": {},
         "log_eventos": [],
         "padrao_selecionado": None,
         "ranking_padroes": {},
@@ -105,13 +133,12 @@ def inicializar_estados():
 inicializar_estados()
 
 # -----------------------------------------------------------------------------
-# 📝 SISTEMA DE LOGS (TERMINAL + INTERFACE)
+# 📝 LOGS E RESULTADOS
 # -----------------------------------------------------------------------------
 def registrar_log(mensagem: str, cor_terminal=CoresTerminal.RESET):
     log_terminal(mensagem, cor_terminal)
     horario = datetime.now().strftime('%H:%M:%S')
-    entrada = f"[{horario}] {mensagem}"
-    st.session_state.log_eventos.insert(0, entrada)
+    st.session_state.log_eventos.insert(0, f"[{horario}] {mensagem}")
     if len(st.session_state.log_eventos) > 50:
         st.session_state.log_eventos.pop()
 
@@ -120,48 +147,60 @@ def registrar_resultado(resultado: str, padrao_usado: str = None):
     if len(st.session_state.historico_sinais) > 50:
         st.session_state.historico_sinais.pop()
 
-    if padrao_usado and resultado in ["WIN", "WIN_G1", "WIN_TIE"]:
+    st.session_state.historico_ciclo.append(resultado)
+
+    if padrao_usado:
         if padrao_usado not in st.session_state.ranking_padroes:
             st.session_state.ranking_padroes[padrao_usado] = {"wins": 0, "total": 0}
-        st.session_state.ranking_padroes[padrao_usado]["wins"] += 1
+        
         st.session_state.ranking_padroes[padrao_usado]["total"] += 1
-    elif padrao_usado and resultado == "LOSS":
-        if padrao_usado not in st.session_state.ranking_padroes:
-            st.session_state.ranking_padroes[padrao_usado] = {"wins": 0, "total": 0}
-        st.session_state.ranking_padroes[padrao_usado]["total"] += 1
+        if resultado in ["WIN", "WIN_G1", "WIN_TIE"]:
+            st.session_state.ranking_padroes[padrao_usado]["wins"] += 1
+
+    processar_fechamento_ciclo()
 
 # -----------------------------------------------------------------------------
-# 📊 PLACAR E ESTATÍSTICAS
+# 📊 FECHAMENTO DE CICLO (50 SINAIS)
 # -----------------------------------------------------------------------------
-def obter_texto_placar() -> str:
-    historico = st.session_state.historico_sinais
-    if not historico:
-        return "📊 *PLACAR:* Aguardando primeiras entradas da sessão..."
-
+def processar_fechamento_ciclo():
+    historico = st.session_state.historico_ciclo
     total = len(historico)
-    wins_direto = historico.count("WIN")
+
+    if total < 50:
+        return
+
+    wins_diretos = historico.count("WIN")
     wins_g1 = historico.count("WIN_G1")
     wins_tie = historico.count("WIN_TIE")
     losses = historico.count("LOSS")
-    total_wins = wins_direto + wins_g1 + wins_tie
+
+    total_wins = wins_diretos + wins_g1 + wins_tie
     assertividade = (total_wins / total * 100) if total > 0 else 0
 
-    return (
-        f"📊 *PLACAR ACUMULADO (Últimas {total} entradas):*\n"
-        f"• 🎯 Win Direto: `{wins_direto}`\n"
-        f"• 🔄 Win Gale 1: `{wins_g1}`\n"
-        f"• 🟡 Tie (Proteção): `{wins_tie}`\n"
-        f"• ❌ Loss: `{losses}`\n"
-        f"• 🚀 *Assertividade:* `{assertividade:.1f}%`"
+    mensagem = (
+        "📊 *ASSERTIVIDADE FINAL - CICLO DE 50 ENTRADAS*\n\n"
+        f"🎯 *Win Direto:* `{wins_diretos}`\n"
+        f"🔄 *Win Gale 1:* `{wins_g1}`\n"
+        f"🟡 *Win Proteção (Tie):* `{wins_tie}`\n"
+        f"❌ *Loss:* `{losses}`\n\n"
+        f"🚀 *ASSERTIVIDADE GLOBAL:* `{assertividade:.1f}%`\n"
+        "─────────────────────────────\n"
+        "🔄 *Ciclo concluído! Reiniciando contador para as próximas 50.*"
     )
 
+    enviar_mensagem_telegram(mensagem)
+    registrar_log("📊 CICLO DE 50 CONCLUÍDO!", CoresTerminal.CIANO)
+    st.session_state.historico_ciclo = []
+
 # -----------------------------------------------------------------------------
-# 🏆 RANKING DE PADRÕES MAIS ASSERTIVOS
+# 🏆 RANKING FILTRADO E FORMATADO
 # -----------------------------------------------------------------------------
 def calcular_ranking_padroes():
     ranking = []
+    min_ops = CONFIG["MIN_OPERACOES_RANKING"]
+
     for padrao, dados in st.session_state.ranking_padroes.items():
-        if dados["total"] > 0:
+        if dados["total"] >= min_ops:
             assertividade = (dados["wins"] / dados["total"]) * 100
             ranking.append({
                 "padrao": padrao,
@@ -169,42 +208,48 @@ def calcular_ranking_padroes():
                 "total": dados["total"],
                 "assertividade": assertividade
             })
-    return sorted(ranking, key=lambda x: x["assertividade"], reverse=True)
+    return sorted(ranking, key=lambda x: (x["assertividade"], x["total"]), reverse=True)
 
 def formatar_ranking_telegram() -> str:
     ranking = calcular_ranking_padroes()
     if not ranking:
-        return "📊 *Ranking de Padrões:* Sem dados suficientes ainda."
+        return "🏆 *Ranking de Padrões:* Aguardando amostragem mínima."
 
-    linhas = ["🏆 *PADRÕES MAIS ASSERTIVOS:*"]
+    linhas = ["🏆 *PADRÕES MAIS ASSERTIVOS DA SESSÃO:*"]
     for i, item in enumerate(ranking[:5], 1):
         linhas.append(
-            f"{i}. `{item['padrao']}` → {item['assertividade']:.1f}% "
+            f"{i}. `{item['padrao']}` → *{item['assertividade']:.1f}%* "
             f"({item['acertos']}/{item['total']})"
         )
     return "\n".join(linhas)
 
-# -----------------------------------------------------------------------------
-# ✉️ ENVIO DE MENSAGENS — TELEGRAM
-# -----------------------------------------------------------------------------
+def obter_texto_placar() -> str:
+    historico = st.session_state.historico_sinais
+    if not historico:
+        return "📊 *PLACAR:* Aguardando primeiras entradas..."
 
+    total = len(historico)
+    wins_direto = historico.count("WIN")
+    wins_g1 = historico.count("WIN_G1")
+    wins_tie = historico.count("WIN_TIE")
+    losses = historico.count("LOSS")
+    assertividade = ((wins_direto + wins_g1 + wins_tie) / total * 100) if total > 0 else 0
+
+    return (
+        f"📊 *PLACAR ACUMULADO ({total} entradas):*\n"
+        f"• 🎯 Win Direto: `{wins_direto}` | 🔄 Gale 1: `{wins_g1}`\n"
+        f"• 🟡 Proteção Tie: `{wins_tie}` | ❌ Loss: `{losses}`\n"
+        f"• 🚀 *Assertividade:* `{assertividade:.1f}%`"
+    )
+
+# -----------------------------------------------------------------------------
+# ✉️ TELEGRAM
+# -----------------------------------------------------------------------------
 def enviar_mensagem_telegram(texto: str) -> bool:
-    if not texto:
-        registrar_log("⚠️ Mensagem vazia", CoresTerminal.AMARELO)
+    if not texto or not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         return False
 
-    if not TELEGRAM_TOKEN or len(TELEGRAM_TOKEN) < 20:
-        registrar_log("❌ TELEGRAM_TOKEN está vazio ou inválido!", CoresTerminal.VERMELHO)
-        return False
-
-    if not TELEGRAM_CHAT_ID:
-        registrar_log("❌ TELEGRAM_CHAT_ID não configurado!", CoresTerminal.VERMELHO)
-        return False
-
-    # ✅ URL MONTADA CORRETAMENTE
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    registrar_log(f"🔗 URL Telegram: {url[:50]}...", CoresTerminal.CIANO)
-
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
         "text": texto,
@@ -213,183 +258,148 @@ def enviar_mensagem_telegram(texto: str) -> bool:
     }
 
     try:
-        response = requests.post(
-            url,
-            json=payload,
-            timeout=CONFIG["TIMEOUT_TELEGRAM"]
-        )
-
-        if response.status_code == 404:
-            registrar_log("❌ ERRO 404 → Token INVÁLIDO! Verifique o TELEGRAM_TOKEN", CoresTerminal.VERMELHO)
-            return False
-
-        if response.status_code == 401:
-            registrar_log("❌ ERRO 401 → Token inválido ou expirado", CoresTerminal.VERMELHO)
-            return False
-
-        if response.status_code == 400:
-            registrar_log("❌ ERRO 400 → Chat ID inválido ou bot não no grupo", CoresTerminal.VERMELHO)
-            return False
-
+        response = requests.post(url, json=payload, timeout=CONFIG["TIMEOUT_TELEGRAM"])
         response.raise_for_status()
         registrar_log("✅ Mensagem enviada ao Telegram!", CoresTerminal.VERDE)
         return True
-
     except Exception as e:
-        registrar_log(f"❌ Falha: {str(e)[:80]}", CoresTerminal.VERMELHO)
+        registrar_log(f"❌ Falha no Telegram: {str(e)[:80]}", CoresTerminal.VERMELHO)
         return False
 
 # -----------------------------------------------------------------------------
-# 🔌 BUSCA DE DADOS — API (LOGS DE RESULTADO ESTILO TERMINAL)
+# 🔌 BUSCA DE DADOS (API)
 # -----------------------------------------------------------------------------
 def buscar_historico_api():
     url = (
         f"https://api.core.public.tipminer.com/v1/bac-bo/rounds/{CONFIG['MESA_ID']}/history"
-        f"?limit={CONFIG['LIMITE_RODADAS']}"
-        f"&timezone={CONFIG['TIMEZONE'].replace('/', '%2F')}"
-        f"&_cb={str(uuid.uuid4())}"
+        f"?limit={CONFIG['LIMITE_RODADAS']}&timezone={CONFIG['TIMEZONE'].replace('/', '%2F')}&_cb={uuid.uuid4()}"
     )
-    
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-        "Accept": "application/json, text/plain, */*",
-        "Origin": "https://www.tipminer.com",
-        "Referer": "https://www.tipminer.com/"
-    }
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
 
     try:
         response = requests.get(url, headers=headers, timeout=CONFIG["TIMEOUT_API"])
-        
         if response.status_code != 200:
-            registrar_log(f"🔗 Status da API: {response.status_code}", CoresTerminal.CIANO)
-            return [], [], []
+            return [], [], [], []
 
         dados = response.json()
-
         if not isinstance(dados, list):
-            registrar_log("⚠️ API retornou formato inesperado", CoresTerminal.AMARELO)
-            return [], [], []
+            return [], [], [], []
 
-        cores, uuids, pontos = [], [], []
+        cores, uuids, pontos, compostos = [], [], [], []
         for item in dados:
-            tipo = str(item.get("type", "")).upper().strip()
-            uuid_rodada = item.get("uuid", "")
+            tipo = str(item.get("type", "")).upper()
+            uuid_r = item.get("uuid", "")
             ponto = item.get("result", 0)
 
             if "BANKER" in tipo or "RED" in tipo:
-                cor = "🔴"
+                cor, nome = "🔴", "BANKER"
             elif "PLAYER" in tipo or "BLUE" in tipo:
-                cor = "🔵"
+                cor, nome = "🔵", "PLAYER"
             elif "TIE" in tipo or "YELLOW" in tipo:
-                cor = "🟡"
+                cor, nome = "🟡", "TIE"
             else:
                 continue
 
-            if not uuid_rodada:
+            if not uuid_r:
                 continue
+
             cores.append(cor)
-            uuids.append(uuid_rodada)
+            uuids.append(uuid_r)
             pontos.append(ponto)
+            compostos.append(f"{nome}_{ponto}")
 
-        cores = cores[::-1]
-        uuids = uuids[::-1]
-        pontos = pontos[::-1]
+        return cores[::-1], uuids[::-1], pontos[::-1], compostos[::-1]
 
-        # Apresentação do resultado no log apenas ao identificar uma nova rodada
-        if uuids and uuids[-1] != st.session_state.ultimo_uuid_processado:
-            ultimo_cor = cores[-1]
-            ultimo_ponto = pontos[-1]
-            registrar_log(f"🔄 Nova rodada: {ultimo_cor} ({ultimo_ponto})", CoresTerminal.AZUL)
-
-        return cores, uuids, pontos
-
-    except Exception as e:
-        registrar_log(f"❌ Erro na API: {str(e)[:80]}", CoresTerminal.VERMELHO)
-        return [], [], []
+    except Exception:
+        return [], [], [], []
 
 # -----------------------------------------------------------------------------
-# 🧠 ANÁLISE DE PADRÕES OTIMIZADA PARA 200 RODADAS
+# 🧠 BUSCA HÍBRIDA DE PADRÕES (CORES + COMPOSTOS)
 # -----------------------------------------------------------------------------
-def analisar_multi_amostra(historico_cores: list):
+def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
-    MINIMO_OCORRENCIAS = 4  # Exige que o padrão tenha acontecido pelo menos 4x para ter validade estatística
+    MINIMO_OCORRENCIAS = 3
 
     if len(historico_cores) < 50:
         return None, 0.0, 0.0, None
 
-    # Padrão atual formado pelas últimas N rodadas
-    padrao = historico_cores[-tamanho_p:]
-    padrao_str = " | ".join(padrao)
-
-    def calcular_probabilidade_janela(amostra):
-        total_ocorrencias = 0
-        vermelho = 0
-        azul = 0
-
-        for i in range(len(amostra) - tamanho_p):
-            if amostra[i : i + tamanho_p] == padrao:
-                proximo = amostra[i + tamanho_p]
-                total_ocorrencias += 1
+    def buscar_em_lista(amostra, padrao):
+        total, verm, azul = 0, 0, 0
+        tam = len(padrao)
+        for i in range(len(amostra) - tam):
+            if amostra[i : i + tam] == padrao:
+                proximo = historico_cores[i + tam] if len(amostra) == len(historico_cores) else amostra[i + tam]
+                total += 1
                 if proximo == "🔴":
-                    vermelho += 1
+                    verm += 1
                 elif proximo == "🔵":
                     azul += 1
+        if total < MINIMO_OCORRENCIAS:
+            return 0.0, 0.0, total
+        return (verm / total) * 100, (azul / total) * 100, total
 
-        if total_ocorrencias < MINIMO_OCORRENCIAS:
-            return 0.0, 0.0, total_ocorrencias
+    # 1. Testa busca com Padrão Composto (Cor + Número)
+    padrao_comp = historico_compostos[-tamanho_p:]
+    prob_r_c, prob_b_c, oc_c = buscar_em_lista(historico_compostos, padrao_comp)
 
-        prob_r = (vermelho / total_ocorrencias) * 100
-        prob_b = (azul / total_ocorrencias) * 100
-        return prob_r, prob_b, total_ocorrencias
+    if oc_c >= MINIMO_OCORRENCIAS:
+        if prob_r_c >= CONFIG["SENSIBILIDADE_MINIMA"]:
+            return "🔴", round(prob_r_c, 1), round(prob_r_c, 1), " | ".join(padrao_comp)
+        if prob_b_c >= CONFIG["SENSIBILIDADE_MINIMA"]:
+            return "🔵", round(prob_b_c, 1), round(prob_b_c, 1), " | ".join(padrao_comp)
 
-    # Analisa o histórico recente (50R) e o histórico total disponível (até 200R)
-    amostra_50 = historico_cores[-50:]
-    amostra_total = historico_cores  # Usa as 200 rodadas
+    # 2. Fallback para busca por Sequência de Cores
+    padrao_cor = historico_cores[-tamanho_p:]
+    prob_r_30, prob_b_30, _ = buscar_em_lista(historico_cores[-50:], padrao_cor)
+    prob_r_tot, prob_b_tot, oc_tot = buscar_em_lista(historico_cores, padrao_cor)
 
-    prob_r_50, prob_b_50, ocorrencias_50 = calcular_probabilidade_janela(amostra_50)
-    prob_r_total, prob_b_total, ocorrencias_total = calcular_probabilidade_janela(amostra_total)
-
-    sensibilidade = CONFIG["SENSIBILIDADE_MINIMA"]
-
-    # Salva na memória para exibir no painel do Streamlit
+    padrao_str = " | ".join(padrao_cor)
     st.session_state.ultimo_analise = {
         "padrao": padrao_str,
-        "prob30_r": round(prob_r_50, 1),      # Exibe tendência recente (50R)
-        "prob30_b": round(prob_b_50, 1),
-        "prob50_r": round(prob_r_total, 1),   # Exibe tendência geral (200R)
-        "prob50_b": round(prob_b_total, 1),
+        "prob30_r": round(prob_r_30, 1), "prob30_b": round(prob_b_30, 1),
+        "prob50_r": round(prob_r_tot, 1), "prob50_b": round(prob_b_tot, 1),
         "tamanho": tamanho_p
     }
 
-    # Valida se o padrão atingiu a sensibilidade e teve amostragem suficiente nas 200 rodadas
-    if prob_r_total >= sensibilidade and ocorrencias_total >= MINIMO_OCORRENCIAS:
-        return "🔴", round(prob_r_50, 1), round(prob_r_total, 1), padrao_str
-
-    elif prob_b_total >= sensibilidade and ocorrencias_total >= MINIMO_OCORRENCIAS:
-        return "🔵", round(prob_b_50, 1), round(prob_b_total, 1), padrao_str
+    if prob_r_tot >= CONFIG["SENSIBILIDADE_MINIMA"] and oc_tot >= MINIMO_OCORRENCIAS:
+        return "🔴", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_str
+    if prob_b_tot >= CONFIG["SENSIBILIDADE_MINIMA"] and oc_tot >= MINIMO_OCORRENCIAS:
+        return "🔵", round(prob_b_30, 1), round(prob_b_tot, 1), padrao_str
 
     return None, 0.0, 0.0, None
 
 # -----------------------------------------------------------------------------
-# 📈 ESTUDO DE TIE / EMPATE
+# 📈 ESTUDO DE TIE
 # -----------------------------------------------------------------------------
 def calcular_estudo_tie(historico_cores: list) -> str:
     if "🟡" not in historico_cores or len(historico_cores) < 50:
-        return "⚪ *Status Tie:* Dados insuficientes para análise."
+        return "⚪ *Status Tie:* Dados insuficientes."
 
     indices = [i for i, c in enumerate(historico_cores) if c == "🟡"]
-    distancia_atual = (len(historico_cores) - 1) - indices[-1]
-
+    distancia = (len(historico_cores) - 1) - indices[-1]
     gaps = [indices[i] - indices[i-1] - 1 for i in range(1, len(indices))]
-    freq = Counter(gaps)
-    vezes = freq.get(distancia_atual, 0)
+    vezes = Counter(gaps).get(distancia, 0)
 
     if vezes >= 2:
-        return (f"🔥 *PROBABILIDADE ALTA!* Intervalo de `{distancia_atual}R` sem Tie "
-                f"ocorreu `{vezes}x` no histórico.")
-    elif distancia_atual <= 3:
-        return f"⚡ *ZONA DE ECO!* Apenas `{distancia_atual}R` desde o último Tie."
-    return f"📊 *Status Normal:* `{distancia_atual}R` sem Tie (frequência: {vezes}x)."
+        return f"🔥 *PROBABILIDADE ALTA!* `{distancia}R` sem Tie ocorreu `{vezes}x`."
+    if distancia <= 3:
+        return f"⚡ *ZONA DE ECO!* Apenas `{distancia}R` desde o último Tie."
+    return f"📊 *Status Normal:* `{distancia}R` sem Tie (freq: {vezes}x)."
+
+def verificar_radar_tie_aquecido(historico_cores: list, uuid_atual: str):
+    if len(historico_cores) < 50 or "🟡" not in historico_cores[-20:]:
+        return
+    if st.session_state.get("ultimo_uuid_tie_enviado") == uuid_atual:
+        return
+
+    dist = (len(historico_cores) - 1) - [i for i, c in enumerate(historico_cores) if c == "🟡"][-1]
+    if dist in [0, 1, 2, 3, 17]:
+        st.session_state["ultimo_uuid_tie_enviado"] = uuid_atual
+        enviar_mensagem_telegram(
+            f"⚠️ *RADAR TIE - ZONA AQUECIDA* 🟡\n"
+            f"• Distância Atual: `{dist}R` sem Empate.\n"
+            f"💡 Considere reforçar a cobertura no TIE."
+        )
 
 # -----------------------------------------------------------------------------
 # ✅ VERIFICAÇÃO DE RESULTADO
@@ -403,70 +413,46 @@ def verificar_resultado(ultimo_resultado: str):
     acertou = (ultimo_resultado == esperado) or (ultimo_resultado == "🟡")
 
     if acertou:
-        if ultimo_resultado == "🟡":
-            registrar_resultado("WIN_TIE", padrao_usado)
-            registrar_log(f"✅ GREEN DE PRIMEIRA! Tie protegeu → {padrao_usado}", CoresTerminal.VERDE)
-            if st.session_state.tentativa == 1:
-                enviar_mensagem_telegram(
-                    f"✅ *GREEN DE PRIMEIRA!* 🟡\n"
-                    f"Resultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}"
-                )
-        elif st.session_state.tentativa == 1:
-            registrar_resultado("WIN", padrao_usado)
-            registrar_log(f"✅ WIN DIRETO! Padrão: {padrao_usado}", CoresTerminal.VERDE)
-            enviar_mensagem_telegram(
-                f"✅ *WIN DIRETO!* 🎯\n"
-                f"Resultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}"
-            )
-        else:
-            registrar_resultado("WIN_G1", padrao_usado)
-            registrar_log(f"✅ WIN NO GALE 1! Padrão: {padrao_usado}", CoresTerminal.VERDE)
-            enviar_mensagem_telegram(
-                f"✅ *WIN NO GALE 1!* 🎯\n"
-                f"Resultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}"
-            )
+        tipo_win = "WIN_TIE" if ultimo_resultado == "🟡" else ("WIN" if st.session_state.tentativa == 1 else "WIN_G1")
+        registrar_resultado(tipo_win, padrao_usado)
+        
+        txt_win = "GREEN DE PRIMEIRA! 🟡" if tipo_win == "WIN_TIE" else ("WIN DIRETO! 🎯" if tipo_win == "WIN" else "WIN NO GALE 1! 🎯")
+        enviar_mensagem_telegram(f"✅ *{txt_win}*\nResultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}")
+        
         st.session_state.sinal_ativo = False
         st.session_state.padrao_selecionado = None
 
     elif st.session_state.tentativa == 1:
         st.session_state.tentativa = 2
-        registrar_log(f"⚠️ Não bateu 1ª → Gale 1. Padrão: {padrao_usado}", CoresTerminal.AMARELO)
-        enviar_mensagem_telegram(
-            f"⚠️ *NÃO BATEU NA 1ª! VAMOS PARA O GALE 1*\n"
-            f"Entrada mantida: {esperado}"
-        )
+        enviar_mensagem_telegram(f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}")
     else:
         registrar_resultado("LOSS", padrao_usado)
-        registrar_log(f"❌ LOSS CONFIRMADO! Padrão: {padrao_usado}", CoresTerminal.VERMELHO)
-        enviar_mensagem_telegram(
-            f"❌ *LOSS CONFIRMADO*\n"
-            f"Resultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}"
-        )
+        enviar_mensagem_telegram(f"❌ *LOSS CONFIRMADO*\nResultado: `{ultimo_resultado}`\n\n{obter_texto_placar()}")
         st.session_state.sinal_ativo = False
         st.session_state.padrao_selecionado = None
 
 # -----------------------------------------------------------------------------
-# 🔄 PROCESSAMENTO PRINCIPAL
+# 🔄 LOOP PRINCIPAL
 # -----------------------------------------------------------------------------
 def processar_rodada():
-    cores, uuids, _ = buscar_historico_api()
-
+    cores, uuids, pontos, compostos = buscar_historico_api()
     if not uuids:
         return
 
     uuid_atual = uuids[-1]
-
     if uuid_atual == st.session_state.ultimo_uuid_processado:
         return
 
     st.session_state.ultimo_uuid_processado = uuid_atual
     ultimo_resultado = cores[-1]
 
+    verificar_radar_tie_aquecido(cores, uuid_atual)
+
     if st.session_state.sinal_ativo:
         verificar_resultado(ultimo_resultado)
 
     if not st.session_state.sinal_ativo:
-        sugestao, prob30, prob50, padrao = analisar_multi_amostra(cores)
+        sugestao, prob30, prob50, padrao = analisar_multi_amostra(cores, compostos)
 
         if sugestao and st.session_state.ultimo_uuid_sinal_enviado != uuid_atual:
             st.session_state.sinal_ativo = True
@@ -476,58 +462,32 @@ def processar_rodada():
             st.session_state.ultimo_uuid_sinal_enviado = uuid_atual
 
             nome_cor = "🔴 BANKER" if sugestao == "🔴" else "🔵 PLAYER"
-            estudo_tie = calcular_estudo_tie(cores)
-            placar = obter_texto_placar()
-            ranking = formatar_ranking_telegram()
-
+            
             mensagem = (
                 "🤖 *BAC BO PRO - SINAL VIP CONFIRMADO*\n\n"
                 f"🎯 *ENTRADA PRINCIPAL:* {nome_cor}\n"
                 "🛡️ *PROTEÇÃO:* 🟡 TIE (Empate)\n"
                 "🔄 *GESTÃO:* Até Gale 1\n\n"
-                f"🔍 *PADRÃO DETECTADO ({CONFIG['TAMANHO_PADRAO']}R):*\n`{padrao}`\n"
-                "📊 *ASSERTIVIDADE DA ENTRADA:*\n"
-                f"• *Momento (30R):* `{prob30:.1f}%`\n"
-                f"• *Ciclo (50R):* `{prob50:.1f}%`\n\n"
-                f"📈 *ESTUDO DE TIE:*\n{estudo_tie}\n\n"
-                f"{ranking}\n\n"
-                f"{placar}\n\n"
-                f"📝 *Últimas 10 Rodadas:*\n`{' | '.join(cores[-10:])}`"
+                f"🔍 *PADRÃO IDENTIFICADO:*\n`{padrao}`\n\n"
+                f"📊 *ASSERTIVIDADE:* 30R: `{prob30:.1f}%` | 50R: `{prob50:.1f}%`\n\n"
+                f"{calcular_estudo_tie(cores)}\n\n"
+                f"{formatar_ranking_telegram()}\n\n"
+                f"{obter_texto_placar()}"
             )
 
             if enviar_mensagem_telegram(mensagem):
-                registrar_log(f"✅ SINAL ENVIADO → {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
-            else:
-                registrar_log("❌ Falha ao enviar sinal", CoresTerminal.VERMELHO)
-                st.session_state.sinal_ativo = False
-                st.session_state.padrao_selecionado = None
+                registrar_log(f"✅ SINAL ENVIADO: {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
 
 # -----------------------------------------------------------------------------
-# 🖥️ INTERFACE COMPLETA COM PAINÉIS
+# 🖥️ INTERFACE PAINEL
 # -----------------------------------------------------------------------------
-st.title("🤖 Monitor de Sinais Bac-Bo")
+st.title("🤖 Monitor Bac-Bo VIP")
 
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Status do Sinal", "🔴 ATIVO" if st.session_state.sinal_ativo else "🟢 AGUARDANDO")
-col2.metric("Sugestão Atual", st.session_state.sugestao_atual or "—")
-col3.metric("Gale Atual", st.session_state.tentativa or "—")
-col4.metric("Padrão Selecionado", f"`{st.session_state.padrao_selecionado}`" if st.session_state.padrao_selecionado else "—")
-
-st.subheader("🔍 Padrão Analisado na Última Verificação")
-ult = st.session_state.ultimo_analise
-if ult:
-    st.info(f"""
-    **Padrão ({ult['tamanho']} rodadas):** `{ult['padrao']}`
-
-    | Janela | 🔴 Banker | 🔵 Player |
-    |---|---|---|
-    | Últimas 30R | {ult['prob30_r']:.1f}% | {ult['prob30_b']:.1f}% |
-    | Últimas 50R | {ult['prob50_r']:.1f}% | {ult['prob50_b']:.1f}% |
-
-    **Sensibilidade configurada:** {CONFIG['SENSIBILIDADE_MINIMA']}%
-    """)
-else:
-    st.info("⏳ Aguardando primeira análise...")
+col1.metric("Status", "🔴 ATIVO" if st.session_state.sinal_ativo else "🟢 AGUARDANDO")
+col2.metric("Entrada", st.session_state.sugestao_atual or "—")
+col3.metric("Tentativa", f"Gale {st.session_state.tentativa - 1}" if st.session_state.tentativa > 1 else "1ª Entrada")
+col4.metric("Padrão em Uso", f"`{st.session_state.padrao_selecionado}`" if st.session_state.padrao_selecionado else "—")
 
 st.subheader("🏆 Ranking de Padrões Mais Assertivos")
 ranking = calcular_ranking_padroes()
@@ -538,18 +498,17 @@ if ranking:
                 "Posição": f"#{i}",
                 "Padrão": item["padrao"],
                 "Acertos": item["acertos"],
-                "Total": item["total"],
-                "Assertividade %": f"{item['assertividade']:.1f}%"
+                "Total Entradas": item["total"],
+                "Assertividade": f"{item['assertividade']:.1f}%"
             }
             for i, item in enumerate(ranking, 1)
         ],
-        use_container_width=True,
-        hide_index=True
+        use_container_width=True, hide_index=True
     )
 else:
-    st.info("⏳ Aguardando primeiros resultados para montar ranking...")
+    st.info(f"⏳ Aguardando padrões atingirem o mínimo de {CONFIG['MIN_OPERACOES_RANKING']} entradas para exibição.")
 
-st.subheader("📋 Logs de Monitoramento (Terminal + Interface)")
+st.subheader("📋 Logs do Sistema")
 log_container = st.empty()
 
 processar_rodada()
