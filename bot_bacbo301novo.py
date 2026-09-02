@@ -1,4 +1,5 @@
 import time
+import uuid
 from datetime import datetime
 from collections import Counter
 import requests
@@ -80,8 +81,6 @@ CONFIG = {
     "TIMEOUT_API": 10,
     "TIMEOUT_TELEGRAM": 5
 }
-
-API_BASE_URL = "https://api.core.public.tipminer.com/v1/bac-bo/rounds"
 
 # -----------------------------------------------------------------------------
 # 🧠 INICIALIZAÇÃO DE ESTADOS
@@ -211,22 +210,22 @@ def enviar_mensagem_telegram(texto: str) -> bool:
         return False
 
 # -----------------------------------------------------------------------------
-# 🔌 BUSCA DE DADOS — API
+# 🔌 BUSCA DE DADOS — API (ATUALIZADA)
 # -----------------------------------------------------------------------------
-
 def buscar_historico_api():
-    # ✅ ENDPOINT CORRETO — SEM ID NO CAMINHO
+    # URL dinâmica configurada com ID da Mesa e parâmetro de anti-cache (_cb)
     url = (
-        "https://api.core.public.tipminer.com/v1/bac-bo/rounds/history"
+        f"https://api.core.public.tipminer.com/v1/bac-bo/rounds/{CONFIG['MESA_ID']}/history"
         f"?limit={CONFIG['LIMITE_RODADAS']}"
         f"&timezone={CONFIG['TIMEZONE'].replace('/', '%2F')}"
+        f"&_cb={str(uuid.uuid4())}"
     )
     
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         "Accept": "application/json, text/plain, */*",
-        "Origin": "https://tipminer.com",
-        "Referer": "https://tipminer.com/"
+        "Origin": "https://www.tipminer.com",
+        "Referer": "https://www.tipminer.com/"
     }
 
     try:
