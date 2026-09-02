@@ -213,16 +213,26 @@ def enviar_mensagem_telegram(texto: str) -> bool:
 # -----------------------------------------------------------------------------
 # 🔌 BUSCA DE DADOS — API
 # -----------------------------------------------------------------------------
+
 def buscar_historico_api():
+    # ✅ ENDPOINT CORRETO — SEM ID NO CAMINHO
     url = (
-        f"{API_BASE_URL}/{CONFIG['MESA_ID']}/history"
+        "https://api.core.public.tipminer.com/v1/bac-bo/rounds/history"
         f"?limit={CONFIG['LIMITE_RODADAS']}"
         f"&timezone={CONFIG['TIMEZONE'].replace('/', '%2F')}"
     )
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+    
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "application/json, text/plain, */*",
+        "Origin": "https://tipminer.com",
+        "Referer": "https://tipminer.com/"
+    }
 
     try:
         response = requests.get(url, headers=headers, timeout=CONFIG["TIMEOUT_API"])
+        registrar_log(f"🔗 Status da API: {response.status_code}", CoresTerminal.CIANO)
+        
         response.raise_for_status()
         dados = response.json()
 
@@ -252,11 +262,11 @@ def buscar_historico_api():
             pontos.append(ponto)
 
         if uuids:
-            registrar_log(f"✅ {len(uuids)} rodadas carregadas da API", CoresTerminal.VERDE)
+            registrar_log(f"✅ {len(uuids)} rodadas carregadas com sucesso!", CoresTerminal.VERDE)
         return cores[::-1], uuids[::-1], pontos[::-1]
 
     except Exception as e:
-        registrar_log(f"❌ Erro API: {str(e)[:60]}", CoresTerminal.VERMELHO)
+        registrar_log(f"❌ Erro na API: {str(e)[:80]}", CoresTerminal.VERMELHO)
         return [], [], []
 
 # -----------------------------------------------------------------------------
