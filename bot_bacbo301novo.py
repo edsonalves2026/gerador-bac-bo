@@ -308,24 +308,35 @@ def buscar_historico_api():
         return [], [], []
 
 # -----------------------------------------------------------------------------
-# 🧠 ANÁLISE DE PADRÕES COM IDENTIFICAÇÃO
+# 🧠 ANÁLISE DE PADRÕES COM IDENTIFICAÇÃO (CORRIGIDA)
 # -----------------------------------------------------------------------------
 def analisar_multi_amostra(historico_cores: list):
-    minimo_rodadas = 51
-    if len(historico_cores) < minimo_rodadas:
+    tamanho_p = CONFIG["TAMANHO_PADRAO"]
+    
+    # Exige apenas o necessário para fazer a leitura (Tamanho do padrão + 10 rodadas)
+    if len(historico_cores) < (tamanho_p + 10):
         return None, 0.0, 0.0, None
 
-    padrao = historico_cores[-CONFIG["TAMANHO_PADRAO"]:]
+    # Padrão atual formado pelas últimas N rodadas
+    padrao = historico_cores[-tamanho_p:]
     padrao_str = " | ".join(padrao)
 
-    def calcular_probabilidade(amostra_tamanho: int):
-        amostra = historico_cores[-amostra_tamanho:]
-        total_ocorrencias = vermelho = azul = 0
+    def calcular_probabilidade(qtd_rodadas: int):
+        # Garante que a fatia tenha tamanho suficiente para a busca
+        if len(historico_cores) < (qtd_rodadas + tamanho_p):
+            amostra = historico_cores
+        else:
+            amostra = historico_cores[-(qtd_rodadas + tamanho_p):]
+            
+        total_ocorrencias = 0
+        vermelho = 0
+        azul = 0
 
-        for i in range(len(amostra) - CONFIG["TAMANHO_PADRAO"]):
-            if amostra[i:i+CONFIG["TAMANHO_PADRAO"]] == padrao:
+        # Percorre a amostra procurando repetições do mesmo padrão
+        for i in range(len(amostra) - tamanho_p):
+            if amostra[i : i + tamanho_p] == padrao:
+                proximo = amostra[i + tamanho_p]
                 total_ocorrencias += 1
-                proximo = amostra[i + CONFIG["TAMANHO_PADRAO"]]
                 if proximo == "🔴":
                     vermelho += 1
                 elif proximo == "🔵":
@@ -333,10 +344,10 @@ def analisar_multi_amostra(historico_cores: list):
 
         if total_ocorrencias == 0:
             return 0.0, 0.0
-        return (
-            vermelho / total_ocorrencias * 100,
-            azul / total_ocorrencias * 100
-        )
+
+        prob_r = (vermelho / total_ocorrencias) * 100
+        prob_b = (azul / total_ocorrencias) * 100
+        return prob_r, prob_b
 
     prob_r_30, prob_b_30 = calcular_probabilidade(30)
     prob_r_50, prob_b_50 = calcular_probabilidade(50)
@@ -348,12 +359,13 @@ def analisar_multi_amostra(historico_cores: list):
         "prob30_b": round(prob_b_30, 1),
         "prob50_r": round(prob_r_50, 1),
         "prob50_b": round(prob_b_50, 1),
-        "tamanho": CONFIG["TAMANHO_PADRAO"]
+        "tamanho": tamanho_p
     }
 
-    if prob_r_30 >= sensibilidade and prob_r_50 >= sensibilidade:
+    # Valida se ATENDE À SENSIBILIDADE MINIMA em ambas as janelas (ou na de 30R caso 50R ainda não tenha dados)
+    if prob_r_30 >= sensibilidade and (prob_r_50 >= sensibilidade or prob_r_50 == 0.0):
         return "🔴", round(prob_r_30, 1), round(prob_r_50, 1), padrao_str
-    elif prob_b_30 >= sensibilidade and prob_b_50 >= sensibilidade:
+    elif prob_b_30 >= sensibilidade and (prob_b_50 >= sensibilidade or prob_b_50 == 0.0):
         return "🔵", round(prob_b_30, 1), round(prob_b_50, 1), padrao_str
 
     return None, 0.0, 0.0, None
