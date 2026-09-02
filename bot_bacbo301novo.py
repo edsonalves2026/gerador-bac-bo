@@ -275,20 +275,20 @@ def processar_rodada():
 
                 mensagem = (
                     "🤖 *BAC BO PRO - SINAL VIP CONFIRMADO*\n\n"
-                    f"🎯 *ENTRADA PRINCIPAL:* {nome_cor}\n"
+                    f"🎯 *ENTRADA PRINCIPAL:* {sugestao_cor}\n"
                     "🛡️ *PROTEÇÃO:* 🟢 TIE (Empate)\n"
                     "🔄 *GESTÃO:* Mão Leve (Até Gale 1)\n\n"
                     "📊 *ASSERTIVIDADE DA ENTRADA:*\n"
                     f"• *Momento (30R):* `{prob_30:.1f}%`\n"
                     f"• *Ciclo (50R):* `{prob_50:.1f}%`\n\n"
                     "📈 *ESTUDO DE PROBABILIDADE DO TIE (200R):*\n"
-                    f"{estudo_tie}\n\n"
-                    f"{placar}\n\n"
+                    f"{historico_cores}\n\n"
+                    f"{verificar_resultado_sinal}\n\n"
                     f"📝 *Últimas 10 Rodadas:*\n`{' | '.join(cores[-10:])}`"
                 )
                 enviar_mensagem_telegram(mensagem)
 
-ef executar_robo():
+def executar_robo():
     print("🚀 Executando aplicação...")
     inicializar_bot_telegram()
 
