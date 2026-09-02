@@ -1,3 +1,5 @@
+import json
+import os
 import time
 import uuid
 from datetime import datetime
@@ -43,6 +45,30 @@ def carregar_credenciais():
 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = carregar_credenciais()
 
 # -----------------------------------------------------------------------------
+# 💾 PERSISTÊNCIA DE PADRÕES FIXOS EM ARQUIVO LOCAL (JSON)
+# -----------------------------------------------------------------------------
+ARQUIVO_PADROES = "padroes_fixos.json"
+
+def carregar_padroes_locais():
+    if os.path.exists(ARQUIVO_PADROES):
+        try:
+            with open(ARQUIVO_PADROES, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+def salvar_padroes_locais(padroes):
+    try:
+        with open(ARQUIVO_PADROES, "w", encoding="utf-8") as f:
+            json.dump(padroes, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        log_terminal(f"❌ Erro ao salvar JSON: {e}", CoresTerminal.VERMELHO)
+
+if "PADROES_MANUAIS_COMPOSTOS" not in st.session_state:
+    st.session_state.PADROES_MANUAIS_COMPOSTOS = carregar_padroes_locais()
+
+# -----------------------------------------------------------------------------
 # 🎛️ PAINEL DE CONTROLE (INTERFACE)
 # -----------------------------------------------------------------------------
 st.sidebar.title("🎛️ Painel de Controle")
@@ -58,7 +84,7 @@ SENSIBILIDADE_MINIMA = st.sidebar.slider(
 )
 
 TAMANHO_PADRAO = st.sidebar.slider(
-    "📏 Tamanho do Padrão (rodadas)",
+    "📏 Tamanho do Padrão Dinâmico (rodadas)",
     min_value=2, max_value=8, value=3, step=1
 )
 
@@ -73,6 +99,45 @@ MESA_ID = st.sidebar.text_input(
     value="cc71e81d-8b56-4868-91c7-7224be543dce"
 )
 
+# -----------------------------------------------------------------------------
+# 📌 GERENCIADOR DE PADRÕES FIXOS NA SIDEBAR
+# -----------------------------------------------------------------------------
+st.sidebar.divider()
+st.sidebar.subheader("📌 Cadastrar Padrão Fixo Manual")
+
+with st.sidebar.form("form_novo_padrao", clear_on_submit=True):
+    nome_padrao = st.text_input("Nome do Padrão", placeholder="Ex: Duplo 10 e 8")
+    sequencia_input = st.text_input(
+        "Sequência (separada por vírgula)", 
+        placeholder="Ex: 🔴 10, 🔵 8 ou 🔴, 🔴"
+    )
+    sugestao_entrada = st.selectbox("Entrada Recomendada", ["🔴 BANKER", "🔵 PLAYER"])
+    btn_salvar = st.form_submit_button("➕ Salvar Padrão Fixo")
+
+    if btn_salvar and sequencia_input and nome_padrao:
+        lista_seq = [item.strip() for item in sequencia_input.split(",")]
+        cor_sugestao = "🔴" if "BANKER" in sugestao_entrada else "🔵"
+        nome_sugestao = "BANKER" if "BANKER" in sugestao_entrada else "PLAYER"
+
+        st.session_state.PADROES_MANUAIS_COMPOSTOS[nome_padrao] = {
+            "padrao": lista_seq,
+            "sugestao": cor_sugestao,
+            "nome_sugestao": nome_sugestao,
+            "ativo": True
+        }
+        salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
+        st.sidebar.success(f"Padrão '{nome_padrao}' salvo!")
+
+if st.session_state.PADROES_MANUAIS_COMPOSTOS:
+    st.sidebar.markdown("**Padrões Salvos:**")
+    for chave, item in list(st.session_state.PADROES_MANUAIS_COMPOSTOS.items()):
+        seq_txt = " | ".join(item["padrao"])
+        st.sidebar.text(f"• {chave}: [{seq_txt}] ➔ {item['sugestao']}")
+        if st.sidebar.button(f"🗑️ Remover {chave}", key=f"del_{chave}"):
+            del st.session_state.PADROES_MANUAIS_COMPOSTOS[chave]
+            salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
+            st.rerun()
+
 CONFIG = {
     "MESA_ID": MESA_ID,
     "INTERVALO_VERIFICACAO": INTERVALO_VERIFICACAO,
@@ -84,26 +149,6 @@ CONFIG = {
     "TIMEZONE": "America/Sao_Paulo",
     "TIMEOUT_API": 10,
     "TIMEOUT_TELEGRAM": 5
-}
-
-# -----------------------------------------------------------------------------
-# 🎯 PADRÕES MANUAIS COMPOSTOS
-# -----------------------------------------------------------------------------
-PADROES_MANUAIS_COMPOSTOS = {
-    "composto_manual_1": {
-        "padrao": ["🔴 11", "🔵 8", "🔴 11"],
-        "sugestao": "🔵",
-        "nome_sugestao": "PLAYER",
-        "ativo": True,
-        "tamanho_padrao": 3
-    },
-    "composto_manual_2": {
-        "padrao": ["🔵 8", "🔴 11", "🔵 8"],
-        "sugestao": "🔴",
-        "nome_sugestao": "BANKER",
-        "ativo": True,
-        "tamanho_padrao": 3
-    }
 }
 
 # -----------------------------------------------------------------------------
@@ -315,7 +360,7 @@ def buscar_historico_api():
         return [], [], [], [], []
 
 # -----------------------------------------------------------------------------
-# 🧠 BUSCA HÍBRIDA DE PADRÕES (SEPARADA E CORRIGIDA)
+# 🧠 BUSCA HÍBRIDA (PADRÕES FIXOS -> COMPOSTOS -> CORES)
 # -----------------------------------------------------------------------------
 def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
@@ -324,14 +369,36 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     if len(historico_cores) < 50:
         return None, 0.0, 0.0, None
 
-    # Função auxiliar genérica para buscar frequências em qualquer histórico
+    # =========================================================================
+    # 0º TESTE: VALIDAÇÃO DE PADRÕES FIXOS / MANUAIS (PRIORIDADE MÁXIMA)
+    # =========================================================================
+    for chave, item in st.session_state.PADROES_MANUAIS_COMPOSTOS.items():
+        if not item.get("ativo", False):
+            continue
+
+        padrao_fixo = item["padrao"]
+        tam_fixo = len(padrao_fixo)
+
+        if len(historico_cores) < tam_fixo:
+            continue
+
+        eh_composto = any(" " in elem for elem in padrao_fixo)
+        fatia_atual = historico_compostos[-tam_fixo:] if eh_composto else historico_cores[-tam_fixo:]
+
+        if fatia_atual == padrao_fixo:
+            sugestao = item["sugestao"]
+            padrao_str = f"📌 FIXO [{chave}]: {' | '.join(padrao_fixo)}"
+            registrar_log(f"🎯 Padrão Fixo Detectado: {chave}", CoresTerminal.AMARELO)
+            return sugestao, 100.0, 100.0, padrao_str
+
+    # Função auxiliar genérica para estatística dinâmica
     def buscar_frequencia(lista_historico, padrao_procurado):
         total, verm, azul = 0, 0, 0
         tam = len(padrao_procurado)
         
         for i in range(len(lista_historico) - tam):
             if lista_historico[i : i + tam] == padrao_procurado:
-                proximo = historico_cores[i + tam]  # O resultado seguinte sempre é a COR
+                proximo = historico_cores[i + tam]
                 total += 1
                 if proximo == "🔴":
                     verm += 1
@@ -344,7 +411,7 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
         return (verm / total) * 100, (azul / total) * 100, total
 
     # =========================================================================
-    # 1º TESTE: Busca por Padrão COMPOSTO (Cor + Número | Ex: 🔴 10 | 🔵 8)
+    # 1º TESTE ESTATÍSTICO: Padrão COMPOSTO (Cor + Número)
     # =========================================================================
     padrao_comp = historico_compostos[-tamanho_p:]
     prob_r_comp, prob_b_comp, oc_comp = buscar_frequencia(historico_compostos, padrao_comp)
@@ -357,11 +424,9 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
             return "🔵", round(prob_b_comp, 1), round(prob_b_comp, 1), padrao_comp_str
 
     # =========================================================================
-    # 2º TESTE: Busca por Sequência Apenas de CORES (Fallback | Ex: 🔴 | 🔴 | 🔵)
+    # 2º TESTE ESTATÍSTICO: Padrão por CORES (Fallback)
     # =========================================================================
     padrao_cor = historico_cores[-tamanho_p:]
-    
-    # Avalia amostragem recente (30R) e total (50R+)
     prob_r_30, prob_b_30, _ = buscar_frequencia(historico_cores[-30:], padrao_cor)
     prob_r_tot, prob_b_tot, oc_tot = buscar_frequencia(historico_cores, padrao_cor)
 
