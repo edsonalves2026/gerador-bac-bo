@@ -91,14 +91,14 @@ CONFIG = {
 # -----------------------------------------------------------------------------
 PADROES_MANUAIS_COMPOSTOS = {
     "composto_manual_1": {
-        "padrao": ["BANKER_11", "PLAYER_8", "BANKER_11"],
+        "padrao": ["🔴 11", "🔵 8", "🔴 11"],
         "sugestao": "🔵",
         "nome_sugestao": "PLAYER",
         "ativo": True,
         "tamanho_padrao": 3
     },
     "composto_manual_2": {
-        "padrao": ["PLAYER_8", "BANKER_11", "PLAYER_8"],
+        "padrao": ["🔵 8", "🔴 11", "🔵 8"],
         "sugestao": "🔴",
         "nome_sugestao": "BANKER",
         "ativo": True,
@@ -279,13 +279,13 @@ def buscar_historico_api():
     try:
         response = requests.get(url, headers=headers, timeout=CONFIG["TIMEOUT_API"])
         if response.status_code != 200:
-            return [], [], [], []
+            return [], [], [], [], []
 
         dados = response.json()
         if not isinstance(dados, list):
-            return [], [], [], []
+            return [], [], [], [], []
 
-        cores, uuids, pontos, compostos = [], [], [], []
+        cores, uuids, pontos, compostos, exibicao_rodadas = [], [], [], [], []
         for item in dados:
             tipo = str(item.get("type", "")).upper()
             uuid_r = item.get("uuid", "")
@@ -306,12 +306,13 @@ def buscar_historico_api():
             cores.append(cor)
             uuids.append(uuid_r)
             pontos.append(ponto)
-            compostos.append(f"{nome}_{ponto}")
+            compostos.append(f"{cor} {ponto}")
+            exibicao_rodadas.append(f"{cor} ({ponto})")
 
-        return cores[::-1], uuids[::-1], pontos[::-1], compostos[::-1]
+        return cores[::-1], uuids[::-1], pontos[::-1], compostos[::-1], exibicao_rodadas[::-1]
 
     except Exception:
-        return [], [], [], []
+        return [], [], [], [], []
 
 # -----------------------------------------------------------------------------
 # 🧠 BUSCA HÍBRIDA DE PADRÕES (CORES + COMPOSTOS)
@@ -393,7 +394,7 @@ def verificar_radar_tie_aquecido(historico_cores: list, uuid_atual: str):
         return
 
     dist = (len(historico_cores) - 1) - [i for i, c in enumerate(historico_cores) if c == "🟡"][-1]
-    if dist in [0, 3, 5, 6, 12, 17]:
+    if dist in [0, 1, 2, 3, 17]:
         st.session_state["ultimo_uuid_tie_enviado"] = uuid_atual
         enviar_mensagem_telegram(
             f"⚠️ *RADAR TIE - ZONA AQUECIDA* 🟡\n"
@@ -435,15 +436,15 @@ def verificar_resultado(ultimo_resultado: str):
 # 🔄 LOOP PRINCIPAL
 # -----------------------------------------------------------------------------
 def processar_rodada():
-    cores, uuids, pontos, compostos = buscar_historico_api()
+    cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
     if not uuids:
         return
 
     uuid_atual = uuids[-1]
-    if uuid_atual == st.session_state.ultimo_uuid_processado:
-        return
+    if uuid_atual != st.session_state.ultimo_uuid_processado:
+        st.session_state.ultimo_uuid_processado = uuid_atual
+        registrar_log(f"Nova rodada: {exibicao[-1]}", CoresTerminal.AZUL)
 
-    st.session_state.ultimo_uuid_processado = uuid_atual
     ultimo_resultado = cores[-1]
 
     verificar_radar_tie_aquecido(cores, uuid_atual)
@@ -476,7 +477,7 @@ def processar_rodada():
             )
 
             if enviar_mensagem_telegram(mensagem):
-                registrar_log(f"✅ SINAL ENVIADO: {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
+                registrar_log(f"SINAL ENVIADO: {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
 
 # -----------------------------------------------------------------------------
 # 🖥️ INTERFACE PAINEL
