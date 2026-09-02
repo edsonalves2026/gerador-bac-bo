@@ -393,7 +393,7 @@ def verificar_radar_tie_aquecido(historico_cores: list, uuid_atual: str):
         return
 
     dist = (len(historico_cores) - 1) - [i for i, c in enumerate(historico_cores) if c == "🟡"][-1]
-    if dist in [0, 1, 2, 3, 17]:
+    if dist in [0, 3, 5, 6, 12, 17]:
         st.session_state["ultimo_uuid_tie_enviado"] = uuid_atual
         enviar_mensagem_telegram(
             f"⚠️ *RADAR TIE - ZONA AQUECIDA* 🟡\n"
