@@ -315,7 +315,7 @@ def buscar_historico_api():
         return [], [], [], [], []
 
 # -----------------------------------------------------------------------------
-# 🧠 BUSCA HÍBRIDA DE PADRÕES (CORES + COMPOSTOS)
+# 🧠 BUSCA HÍBRIDA DE PADRÕES (SEPARADA E CORRIGIDA)
 # -----------------------------------------------------------------------------
 def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
@@ -324,48 +324,61 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     if len(historico_cores) < 50:
         return None, 0.0, 0.0, None
 
-    def buscar_em_lista(amostra, padrao):
+    # Função auxiliar genérica para buscar frequências em qualquer histórico
+    def buscar_frequencia(lista_historico, padrao_procurado):
         total, verm, azul = 0, 0, 0
-        tam = len(padrao)
-        for i in range(len(amostra) - tam):
-            if amostra[i : i + tam] == padrao:
-                proximo = historico_cores[i + tam] if len(amostra) == len(historico_cores) else amostra[i + tam]
+        tam = len(padrao_procurado)
+        
+        for i in range(len(lista_historico) - tam):
+            if lista_historico[i : i + tam] == padrao_procurado:
+                proximo = historico_cores[i + tam]  # O resultado seguinte sempre é a COR
                 total += 1
                 if proximo == "🔴":
                     verm += 1
                 elif proximo == "🔵":
                     azul += 1
+
         if total < MINIMO_OCORRENCIAS:
             return 0.0, 0.0, total
+
         return (verm / total) * 100, (azul / total) * 100, total
 
-    # 1. Testa busca com Padrão Composto (Cor + Número)
+    # =========================================================================
+    # 1º TESTE: Busca por Padrão COMPOSTO (Cor + Número | Ex: 🔴 10 | 🔵 8)
+    # =========================================================================
     padrao_comp = historico_compostos[-tamanho_p:]
-    prob_r_c, prob_b_c, oc_c = buscar_em_lista(historico_compostos, padrao_comp)
+    prob_r_comp, prob_b_comp, oc_comp = buscar_frequencia(historico_compostos, padrao_comp)
 
-    if oc_c >= MINIMO_OCORRENCIAS:
-        if prob_r_c >= CONFIG["SENSIBILIDADE_MINIMA"]:
-            return "🔴", round(prob_r_c, 1), round(prob_r_c, 1), " | ".join(padrao_comp)
-        if prob_b_c >= CONFIG["SENSIBILIDADE_MINIMA"]:
-            return "🔵", round(prob_b_c, 1), round(prob_b_c, 1), " | ".join(padrao_comp)
+    if oc_comp >= MINIMO_OCORRENCIAS:
+        padrao_comp_str = " | ".join(padrao_comp)
+        if prob_r_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
+            return "🔴", round(prob_r_comp, 1), round(prob_r_comp, 1), padrao_comp_str
+        if prob_b_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
+            return "🔵", round(prob_b_comp, 1), round(prob_b_comp, 1), padrao_comp_str
 
-    # 2. Fallback para busca por Sequência de Cores
+    # =========================================================================
+    # 2º TESTE: Busca por Sequência Apenas de CORES (Fallback | Ex: 🔴 | 🔴 | 🔵)
+    # =========================================================================
     padrao_cor = historico_cores[-tamanho_p:]
-    prob_r_30, prob_b_30, _ = buscar_em_lista(historico_cores[-50:], padrao_cor)
-    prob_r_tot, prob_b_tot, oc_tot = buscar_em_lista(historico_cores, padrao_cor)
+    
+    # Avalia amostragem recente (30R) e total (50R+)
+    prob_r_30, prob_b_30, _ = buscar_frequencia(historico_cores[-30:], padrao_cor)
+    prob_r_tot, prob_b_tot, oc_tot = buscar_frequencia(historico_cores, padrao_cor)
 
-    padrao_str = " | ".join(padrao_cor)
+    padrao_cor_str = " | ".join(padrao_cor)
+    
     st.session_state.ultimo_analise = {
-        "padrao": padrao_str,
+        "padrao": padrao_cor_str,
         "prob30_r": round(prob_r_30, 1), "prob30_b": round(prob_b_30, 1),
         "prob50_r": round(prob_r_tot, 1), "prob50_b": round(prob_b_tot, 1),
         "tamanho": tamanho_p
     }
 
-    if prob_r_tot >= CONFIG["SENSIBILIDADE_MINIMA"] and oc_tot >= MINIMO_OCORRENCIAS:
-        return "🔴", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_str
-    if prob_b_tot >= CONFIG["SENSIBILIDADE_MINIMA"] and oc_tot >= MINIMO_OCORRENCIAS:
-        return "🔵", round(prob_b_30, 1), round(prob_b_tot, 1), padrao_str
+    if oc_tot >= MINIMO_OCORRENCIAS:
+        if prob_r_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
+            return "🔴", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_cor_str
+        if prob_b_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
+            return "🔵", round(prob_b_30, 1), round(prob_b_tot, 1), padrao_cor_str
 
     return None, 0.0, 0.0, None
 
