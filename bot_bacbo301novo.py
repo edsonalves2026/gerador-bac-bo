@@ -308,31 +308,24 @@ def buscar_historico_api():
         return [], [], []
 
 # -----------------------------------------------------------------------------
-# 🧠 ANÁLISE DE PADRÕES COM IDENTIFICAÇÃO (CORRIGIDA)
+# 🧠 ANÁLISE DE PADRÕES OTIMIZADA PARA 200 RODADAS
 # -----------------------------------------------------------------------------
 def analisar_multi_amostra(historico_cores: list):
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
-    
-    # Exige apenas o necessário para fazer a leitura (Tamanho do padrão + 10 rodadas)
-    if len(historico_cores) < (tamanho_p + 10):
+    MINIMO_OCORRENCIAS = 4  # Exige que o padrão tenha acontecido pelo menos 4x para ter validade estatística
+
+    if len(historico_cores) < 50:
         return None, 0.0, 0.0, None
 
     # Padrão atual formado pelas últimas N rodadas
     padrao = historico_cores[-tamanho_p:]
     padrao_str = " | ".join(padrao)
 
-    def calcular_probabilidade(qtd_rodadas: int):
-        # Garante que a fatia tenha tamanho suficiente para a busca
-        if len(historico_cores) < (qtd_rodadas + tamanho_p):
-            amostra = historico_cores
-        else:
-            amostra = historico_cores[-(qtd_rodadas + tamanho_p):]
-            
+    def calcular_probabilidade_janela(amostra):
         total_ocorrencias = 0
         vermelho = 0
         azul = 0
 
-        # Percorre a amostra procurando repetições do mesmo padrão
         for i in range(len(amostra) - tamanho_p):
             if amostra[i : i + tamanho_p] == padrao:
                 proximo = amostra[i + tamanho_p]
@@ -342,31 +335,38 @@ def analisar_multi_amostra(historico_cores: list):
                 elif proximo == "🔵":
                     azul += 1
 
-        if total_ocorrencias == 0:
-            return 0.0, 0.0
+        if total_ocorrencias < MINIMO_OCORRENCIAS:
+            return 0.0, 0.0, total_ocorrencias
 
         prob_r = (vermelho / total_ocorrencias) * 100
         prob_b = (azul / total_ocorrencias) * 100
-        return prob_r, prob_b
+        return prob_r, prob_b, total_ocorrencias
 
-    prob_r_30, prob_b_30 = calcular_probabilidade(30)
-    prob_r_50, prob_b_50 = calcular_probabilidade(50)
+    # Analisa o histórico recente (50R) e o histórico total disponível (até 200R)
+    amostra_50 = historico_cores[-50:]
+    amostra_total = historico_cores  # Usa as 200 rodadas
+
+    prob_r_50, prob_b_50, ocorrencias_50 = calcular_probabilidade_janela(amostra_50)
+    prob_r_total, prob_b_total, ocorrencias_total = calcular_probabilidade_janela(amostra_total)
+
     sensibilidade = CONFIG["SENSIBILIDADE_MINIMA"]
 
+    # Salva na memória para exibir no painel do Streamlit
     st.session_state.ultimo_analise = {
         "padrao": padrao_str,
-        "prob30_r": round(prob_r_30, 1),
-        "prob30_b": round(prob_b_30, 1),
-        "prob50_r": round(prob_r_50, 1),
-        "prob50_b": round(prob_b_50, 1),
+        "prob30_r": round(prob_r_50, 1),      # Exibe tendência recente (50R)
+        "prob30_b": round(prob_b_50, 1),
+        "prob50_r": round(prob_r_total, 1),   # Exibe tendência geral (200R)
+        "prob50_b": round(prob_b_total, 1),
         "tamanho": tamanho_p
     }
 
-    # Valida se ATENDE À SENSIBILIDADE MINIMA em ambas as janelas (ou na de 30R caso 50R ainda não tenha dados)
-    if prob_r_30 >= sensibilidade and (prob_r_50 >= sensibilidade or prob_r_50 == 0.0):
-        return "🔴", round(prob_r_30, 1), round(prob_r_50, 1), padrao_str
-    elif prob_b_30 >= sensibilidade and (prob_b_50 >= sensibilidade or prob_b_50 == 0.0):
-        return "🔵", round(prob_b_30, 1), round(prob_b_50, 1), padrao_str
+    # Valida se o padrão atingiu a sensibilidade e teve amostragem suficiente nas 200 rodadas
+    if prob_r_total >= sensibilidade and ocorrencias_total >= MINIMO_OCORRENCIAS:
+        return "🔴", round(prob_r_50, 1), round(prob_r_total, 1), padrao_str
+
+    elif prob_b_total >= sensibilidade and ocorrencias_total >= MINIMO_OCORRENCIAS:
+        return "🔵", round(prob_b_50, 1), round(prob_b_total, 1), padrao_str
 
     return None, 0.0, 0.0, None
 
