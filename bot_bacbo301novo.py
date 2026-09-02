@@ -62,6 +62,22 @@ def obter_texto_placar():
         f"• 🚀 *Assertividade:* `{assertividade:.1f}%`"
     )
 
+def inicializar_bot_telegram():
+    global sinal_ativo, sugestao_atual, tentativa, historico_sinais
+    
+    sinal_ativo = False
+    sugestao_atual = None
+    tentativa = 0
+    historico_sinais = []
+
+mensagem_start = (
+        "🚀 *SESSÃO INICIADA / PADRÕES REINICIADOS*\n\n"
+        "🟢 *Status:* Robô Ativo e Analisando a Mesa\n"
+        "🎯 *Filtro VIP:* Confluência 70%+ (30R & 50R)\n"
+        "📈 *Varredura Tie:* Ativa (200 Rodadas)\n\n"
+        " Placar e histórico zerados para esta nova sessão.\n"
+        "⚠️ *Aguarde o próximo sinal para realizar suas entradas.*")
+
 def enviar_mensagem_telegram(texto):
     if not texto:
         return
@@ -197,6 +213,26 @@ def verificar_resultado_sinal(ultimo_resultado):
         enviar_mensagem_telegram(f"❌ *LOSS CONFIRMADO*\nResultado da Mesa: `{ultimo_resultado}`\n\n{placar}")
         st.session_state.sinal_ativo = False
 
+def processar_rodada(historico_cores, historico_pontos):
+    global sinal_ativo, sugestao_atual, tentativa
+
+    ultimo_resultado = historico_cores[-1]
+
+    if sinal_ativo:
+        verificar_resultado_sinal(ultimo_resultado)
+        return
+
+    sugestao_cor, prob_30, prob_50 = analisar_multi_amostra(historico_cores)
+    
+    if sugestao_cor:
+        sinal_ativo = True
+        sugestao_atual = sugestao_cor
+        tentativa = 1
+
+        nome_cor = "🔴 BANKER" if sugestao_cor == "🔴" else "🔵 PLAYER"
+        estudo_tie = calcular_estudo_probabilidade_tie(historico_cores)
+        placar = obter_texto_placar()
+
 # --- INTERFACE STREAMLIT ---
 st.title("🤖 Monitor de Sinais Bac-Bo")
 
@@ -237,10 +273,6 @@ def processar_rodada():
                 st.session_state.tentativa = 1
                 st.session_state.ultimo_uuid_sinal_enviado = uuid_atual  # Trava extra contra duplicatas
 
-                nome_cor = "🔴 BANKER" if sugestao_cor == "🔴" else "🔵 PLAYER"
-                estudo_tie = calcular_estudo_probabilidade_tie(cores)
-                placar = obter_texto_placar()
-
                 mensagem = (
                     "🤖 *BAC BO PRO - SINAL VIP CONFIRMADO*\n\n"
                     f"🎯 *ENTRADA PRINCIPAL:* {nome_cor}\n"
@@ -256,9 +288,28 @@ def processar_rodada():
                 )
                 enviar_mensagem_telegram(mensagem)
 
+ef executar_robo():
+    print("🚀 Executando aplicação...")
+    inicializar_bot_telegram()
+
+historico_cores, uuids_anteriores, _ = buscar_historico_api()
+
 # Executa o fluxo e atualiza a tela
 processar_rodada()
 log_container.write("\n".join(st.session_state.log_eventos[:15]))
 
-time.sleep(INTERVALO_VERIFICACAO)
-st.rerun()
+while True:
+        time.sleep(INTERVALO_VERIFICACAO)
+        cores_atuais, uuids_atuais, pontos_atuais = buscar_historico_api()
+
+        if not uuids_atuais or not uuids_anteriores:
+            continue
+
+        if uuids_atuais[-1] != uuids_anteriores[-1]:
+            uuids_anteriores = uuids_atuais
+            print(f"🔄 [{datetime.now().strftime('%H:%M:%S')}] Nova rodada: {cores_atuais[-1]} ({pontos_atuais[-1]})")
+            processar_rodada(cores_atuais, pontos_atuais)
+
+
+if __name__ == "__main__":
+    executar_robo()
