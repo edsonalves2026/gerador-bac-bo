@@ -98,13 +98,27 @@ MESA_ID = st.sidebar.text_input(
     "🆔 ID da Mesa",
     value="cc71e81d-8b56-4868-91c7-7224be543dce"
 )
+
+CONFIG = {
+    "MESA_ID": MESA_ID,
+    "INTERVALO_VERIFICACAO": INTERVALO_VERIFICACAO,
+    "SENSIBILIDADE_MINIMA": SENSIBILIDADE_MINIMA,
+    "TAMANHO_PADRAO": TAMANHO_PADRAO,
+    "MIN_OPERACOES_RANKING": MIN_OPERACOES_RANKING,
+    "LIMITE_RODADAS": 200,
+    "MAX_GALE": 1,
+    "TIMEZONE": "America/Sao_Paulo",
+    "TIMEOUT_API": 10,
+    "TIMEOUT_TELEGRAM": 5
+}
+
 # =============================================================================
 # 📊 PAINEL LATERAL: RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (PONTUAÇÃO 1-12)
 # =============================================================================
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
 
-# 1. Amostra de rodadas
+# 1. Inputs
 qtd_rodadas_relatorio = st.sidebar.slider(
     "Amostra de Rodadas:",
     min_value=10,
@@ -114,7 +128,6 @@ qtd_rodadas_relatorio = st.sidebar.slider(
     help="Define quantas rodadas do histórico recente serão usadas na análise."
 )
 
-# 2. Seletor por Entradas Alvo (Sugestão de Aposta)
 filtro_entrada_manual = st.sidebar.multiselect(
     "Filtrar por Entradas Alvo (Sugestão):",
     options=["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"],
@@ -122,7 +135,6 @@ filtro_entrada_manual = st.sidebar.multiselect(
     help="Filtra padrões que sugerem estas cores especificamente."
 )
 
-# 3. Seletor de Valor Específico do Dado/Mão (1 a 12)
 filtro_pontos_manual = st.sidebar.multiselect(
     "Filtrar por Valor Específico da Mão (1 a 12):",
     options=[str(i) for i in range(1, 13)],
@@ -130,8 +142,7 @@ filtro_pontos_manual = st.sidebar.multiselect(
     help="Exemplo: Selecione '10' ou '12' para buscar padrões que contenham esse valor específico do resultado."
 )
 
-
-# 4. Definição da Função (DEVE VIR ANTES DA CHAMADA DO BOTÃO)
+# 2. Definição da Função do Relatório
 def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: list, filtro_pontos: list):
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
 
@@ -254,144 +265,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     else:
         return False, "❌ Falha ao enviar a mensagem ao Telegram."
 
-
-# 5. Botão acionador (Apenas executa ao clicar)
-if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
-    with st.spinner(f"Processando busca por valores (1-12) nas últimas {qtd_rodadas_relatorio} rodadas..."):
-        sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
-            qtd_rodadas_relatorio,
-            filtro_entrada_manual,
-            filtro_pontos_manual
-        )
-        if sucesso:
-            st.sidebar.success(msg_status)
-        else:
-            st.sidebar.warning(msg_status)
-
-    # -------------------------------------------------------------------------
-    # 🧮 CÁLCULO DE ESTATÍSTICAS E TEMPO MÉDIO DO TIE
-    # -------------------------------------------------------------------------
-    indices_tie = [i for i, c in enumerate(amostra_cores) if c == "🟡"]
-    total_ties = len(indices_tie)
-
-    if total_ties >= 2:
-        gaps_tie = [indices_tie[i] - indices_tie[i-1] for i in range(1, total_ties)]
-        media_rodadas_tie = sum(gaps_tie) / len(gaps_tie)
-        tempo_medio_min = (media_rodadas_tie * 30) / 60  # Média de ~30s por rodada
-        txt_estatistica_tie = (
-            f"🟡 *Saídas do TIE:* `{total_ties}x` na amostra\n"
-            f"⏱️ *Intervalo Médio do TIE:* A cada `{media_rodadas_tie:.1f}` rodadas "
-            f"(~`{tempo_medio_min:.1f}` min)"
-        )
-    elif total_ties == 1:
-        txt_estatistica_tie = f"🟡 *Saídas do TIE:* Apenas `1x` na amostra selecionada."
-    else:
-        txt_estatistica_tie = f"🟡 *Saídas do TIE:* Nenhum Empate nas últimas `{len(amostra_cores)}` rodadas."
-
-    # -------------------------------------------------------------------------
-    # 🔍 SIMULAÇÃO RETROATIVA DE PADRÕES (CORES + VALORES 1-12)
-    # -------------------------------------------------------------------------
-    contagem_padroes = {}
-    tamanho_p = CONFIG["TAMANHO_PADRAO"]
-
-    for i in range(tamanho_p, len(amostra_cores) - 1):
-        sub_cores = amostra_cores[:i]
-        sub_compostos = amostra_compostos[:i]
-
-        sugestao, prob30, prob50, padrao_str = analisar_multi_amostra(sub_cores, sub_compostos)
-
-        if not sugestao or not padrao_str:
-            continue
-
-        # Filtro por Valor Específico do Resultado (1 a 12)
-        if filtro_pontos:
-            # Verifica se o valor numérico escolhido aparece na string do padrão (ex: "🔴 10", "🔵 12", "🟡 8")
-            tem_ponto_desejado = any(f" {ponto}" in padrao_str or f"({ponto})" in padrao_str for ponto in filtro_pontos)
-            if not tem_ponto_desejado:
-                continue
-
-        nome_sugestao = "🔴 BANKER" if sugestao == "🔴" else ("🔵 PLAYER" if sugestao == "🔵" else "🟡 TIE")
-
-        # Filtro de Cor da Entrada
-        if filtro_entradas and nome_sugestao not in filtro_entradas:
-            continue
-
-        if padrao_str not in contagem_padroes:
-            contagem_padroes[padrao_str] = {
-                "total": 0,
-                "acertos_direto": 0,
-                "acertos_gale": 0,
-                "sugestao": nome_sugestao
-            }
-
-        contagem_padroes[padrao_str]["total"] += 1
-
-        # Validação do Resultado
-        res_1 = amostra_cores[i]
-        if res_1 == sugestao or res_1 == "🟡":
-            contagem_padroes[padrao_str]["acertos_direto"] += 1
-        elif i + 1 < len(amostra_cores):
-            res_2 = amostra_cores[i + 1]
-            if res_2 == sugestao or res_2 == "🟡":
-                contagem_padroes[padrao_str]["acertos_gale"] += 1
-
-    if not contagem_padroes:
-        return False, f"⚠️ Nenhum padrão atendeu aos critérios com o valor (1-12) selecionado nas últimas {len(amostra_cores)} rodadas."
-
-    total_sinais = sum(p["total"] for p in contagem_padroes.values())
-    total_diretos = sum(p["acertos_direto"] for p in contagem_padroes.values())
-    total_gales = sum(p["acertos_gale"] for p in contagem_padroes.values())
-    total_acertos = total_diretos + total_gales
-    taxa_geral = (total_acertos / total_sinais * 100) if total_sinais > 0 else 0.0
-
-    # -------------------------------------------------------------------------
-    # ✉️ FORMATAÇÃO DA MENSAGEM TELEGRAM
-    # -------------------------------------------------------------------------
-    filtros_aplicados = []
-    if filtro_entradas:
-        filtros_aplicados.append(f"Cores: `{', '.join(filtro_entradas)}`")
-    if filtro_pontos:
-        filtros_aplicados.append(f"Pontos (1-12): `{', '.join(filtro_pontos)}`")
-
-    txt_filtros = f"\n🎯 *Filtros:* {' | '.join(filtros_aplicados)}" if filtros_aplicados else ""
-
-    msg = (
-        f"📊 *RELATÓRIO DE ASSERTIVIDADE HISTÓRICA*\n"
-        f"🆔 *Mesa:* `{CONFIG['MESA_ID'][:8]}...`\n"
-        f"🔄 *Amostra Analisada:* Últimas `{len(amostra_cores)}` rodadas{txt_filtros}\n"
-        f"-----------------------------------\n"
-        f"{txt_estatistica_tie}\n"
-        f"-----------------------------------\n"
-        f"🎯 *Total Sinais:* `{total_sinais}` | 🚀 *Assertividade:* `{taxa_geral:.1f}%`\n"
-        f"🎯 *Win Direto:* `{total_diretos}` | 🔄 *Win Gale 1:* `{total_gales}`\n"
-        f"-----------------------------------\n"
-        f"🏆 *TOP PADRÕES ENCONTRADOS:*\n"
-    )
-
-    padroes_ordenados = sorted(
-        contagem_padroes.items(),
-        key=lambda x: ((x[1]["acertos_direto"] + x[1]["acertos_gale"]) / x[1]["total"]) if x[1]["total"] > 0 else 0,
-        reverse=True
-    )
-
-    for padrao, info in padroes_ordenados[:5]:
-        total_p = info["total"]
-        acertos_p = info["acertos_direto"] + info["acertos_gale"]
-        taxa_p = (acertos_p / total_p * 100) if total_p > 0 else 0.0
-        msg += (
-            f"\n• `{padrao}`\n"
-            f"  ➔ Alvo: *{info['sugestao']}* | Taxa: `{taxa_p:.1f}%` ({acertos_p}/{total_p})\n"
-        )
-
-    msg += "\n⚠️ *Relatório estatístico gerado sob demanda.*"
-
-    if enviar_mensagem_telegram(msg):
-        return True, f"✅ Relatório enviado com sucesso ao Telegram!"
-    else:
-        return False, "❌ Falha ao enviar a mensagem ao Telegram."
-
-
-# 5. Botão de disparo
+# 3. Botão de Disparo
 if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
     with st.spinner(f"Processando busca por valores (1-12) nas últimas {qtd_rodadas_relatorio} rodadas..."):
         sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
@@ -447,19 +321,6 @@ if st.session_state.PADROES_MANUAIS_COMPOSTOS:
             del st.session_state.PADROES_MANUAIS_COMPOSTOS[chave]
             salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
             st.rerun()
-
-CONFIG = {
-    "MESA_ID": MESA_ID,
-    "INTERVALO_VERIFICACAO": INTERVALO_VERIFICACAO,
-    "SENSIBILIDADE_MINIMA": SENSIBILIDADE_MINIMA,
-    "TAMANHO_PADRAO": TAMANHO_PADRAO,
-    "MIN_OPERACOES_RANKING": MIN_OPERACOES_RANKING,
-    "LIMITE_RODADAS": 200,
-    "MAX_GALE": 1,
-    "TIMEZONE": "America/Sao_Paulo",
-    "TIMEOUT_API": 10,
-    "TIMEOUT_TELEGRAM": 5
-}
 
 # -----------------------------------------------------------------------------
 # 🧠 ESTADOS
