@@ -39,7 +39,7 @@ def carregar_credenciais():
         return st.secrets["TELEGRAM_TOKEN"], st.secrets["TELEGRAM_CHAT_ID"]
     except (KeyError, Exception):
         log_terminal("⚠️ Credenciais não configuradas no secrets.toml", CoresTerminal.AMARELO)
-        st.error("⚠️ Credenciais do Telegram não configuradas!")
+        st.error("⚠️ Credenciais do Telegram não configuradas no secrets.toml!")
         st.stop()
 
 TELEGRAM_TOKEN, TELEGRAM_CHAT_ID = carregar_credenciais()
@@ -69,7 +69,7 @@ if "PADROES_MANUAIS_COMPOSTOS" not in st.session_state:
     st.session_state.PADROES_MANUAIS_COMPOSTOS = carregar_padroes_locais()
 
 # -----------------------------------------------------------------------------
-# 🎛️ PAINEL DE CONTROLE (INTERFACE)
+# 🎛️ PAINEL DE CONTROLE (INTERFACE SIDEBAR)
 # -----------------------------------------------------------------------------
 st.sidebar.title("🎛️ Painel de Controle")
 
@@ -112,37 +112,233 @@ CONFIG = {
     "TIMEOUT_TELEGRAM": 5
 }
 
-# =============================================================================
-# 📊 PAINEL LATERAL: RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (PONTUAÇÃO 1-12)
-# =============================================================================
+# -----------------------------------------------------------------------------
+# 🧠 ESTADOS INICIAIS
+# -----------------------------------------------------------------------------
+def inicializar_estados():
+    estados = {
+        "bot_rodando": False,
+        "sinal_ativo": False,
+        "sugestao_atual": None,
+        "tentativa": 0,
+        "ultimo_uuid_processado": None,
+        "ultimo_uuid_sinal_enviado": None,
+        "ultimo_uuid_tie_enviado": None,
+        "ultimo_uuid_tie_direto_enviado": None,
+        "historico_sinais": [],
+        "historico_ciclo": [],
+        "historico_usos": {},
+        "log_eventos": [],
+        "padrao_selecionado": None,
+        "ranking_padroes": {},
+        "ultimo_analise": None
+    }
+    for chave, valor in estados.items():
+        if chave not in st.session_state:
+            st.session_state[chave] = valor
+
+inicializar_estados()
+
+# -----------------------------------------------------------------------------
+# ✉️ TELEGRAM E LOGS
+# -----------------------------------------------------------------------------
+def registrar_log(mensagem: str, cor_terminal=CoresTerminal.RESET):
+    log_terminal(mensagem, cor_terminal)
+    horario = datetime.now().strftime('%H:%M:%S')
+    st.session_state.log_eventos.insert(0, f"[{horario}] {mensagem}")
+    if len(st.session_state.log_eventos) > 50:
+        st.session_state.log_eventos.pop()
+
+def enviar_mensagem_telegram(texto: str) -> bool:
+    if not texto or not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+        return False
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": texto,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": True
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=CONFIG["TIMEOUT_TELEGRAM"])
+        response.raise_for_status()
+        registrar_log("✅ Mensagem enviada ao Telegram!", CoresTerminal.VERDE)
+        return True
+    except Exception as e:
+        registrar_log(f"❌ Falha no Telegram: {str(e)[:80]}", CoresTerminal.VERMELHO)
+        return False
+
+# -----------------------------------------------------------------------------
+# 🔌 BUSCA DE DADOS (API TIPMINER BAC BO)
+# -----------------------------------------------------------------------------
+def buscar_historico_api():
+    url = (
+        f"https://api.core.public.tipminer.com/v1/bac-bo/rounds/{CONFIG['MESA_ID']}/history"
+        f"?limit={CONFIG['LIMITE_RODADAS']}&timezone={CONFIG['TIMEZONE'].replace('/', '%2F')}&_cb={uuid.uuid4()}"
+    )
+    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+
+    try:
+        response = requests.get(url, headers=headers, timeout=CONFIG["TIMEOUT_API"])
+        if response.status_code != 200:
+            return [], [], [], [], []
+
+        dados = response.json()
+        if not isinstance(dados, list):
+            return [], [], [], [], []
+
+        cores, uuids, pontos, compostos, exibicao_rodadas = [], [], [], [], []
+        for item in dados:
+            tipo = str(item.get("type", "")).upper()
+            uuid_r = item.get("uuid", "")
+            ponto = item.get("result", 0)
+
+            if "BANKER" in tipo or "RED" in tipo:
+                cor, nome = "🔴", "BANKER"
+            elif "PLAYER" in tipo or "BLUE" in tipo:
+                cor, nome = "🔵", "PLAYER"
+            elif "TIE" in tipo or "YELLOW" in tipo:
+                cor, nome = "🟡", "TIE"
+            else:
+                continue
+
+            if not uuid_r:
+                continue
+
+            cores.append(cor)
+            uuids.append(uuid_r)
+            pontos.append(ponto)
+            compostos.append(f"{cor} {ponto}")
+            exibicao_rodadas.append(f"{cor} ({ponto})")
+
+        return cores[::-1], uuids[::-1], pontos[::-1], compostos[::-1], exibicao_rodadas[::-1]
+
+    except Exception:
+        return [], [], [], [], []
+
+# -----------------------------------------------------------------------------
+# 📝 PLACAR E CICLO DE ENTRADAS
+# -----------------------------------------------------------------------------
+def registrar_resultado(resultado: str, padrao_usado: str = None):
+    st.session_state.historico_sinais.append(resultado)
+    if len(st.session_state.historico_sinais) > 50:
+        st.session_state.historico_sinais.pop()
+
+    st.session_state.historico_ciclo.append(resultado)
+
+    if padrao_usado:
+        if padrao_usado not in st.session_state.ranking_padroes:
+            st.session_state.ranking_padroes[padrao_usado] = {"wins": 0, "total": 0}
+        
+        st.session_state.ranking_padroes[padrao_usado]["total"] += 1
+        if resultado in ["WIN", "WIN_G1", "WIN_TIE"]:
+            st.session_state.ranking_padroes[padrao_usado]["wins"] += 1
+
+    processar_fechamento_ciclo()
+
+def processar_fechamento_ciclo():
+    historico = st.session_state.historico_ciclo
+    total = len(historico)
+
+    if total < 50:
+        return
+
+    wins_diretos = historico.count("WIN")
+    wins_g1 = historico.count("WIN_G1")
+    wins_tie = historico.count("WIN_TIE")
+    losses = historico.count("LOSS")
+
+    total_wins = wins_diretos + wins_g1 + wins_tie
+    assertividade = (total_wins / total * 100) if total > 0 else 0
+
+    mensagem = (
+        "📊 *ASSERTIVIDADE FINAL - CICLO DE 50 ENTRADAS*\n\n"
+        f"🎯 *Win Direto:* `{wins_diretos}`\n"
+        f"🔄 *Win Gale 1:* `{wins_g1}`\n"
+        f"🟡 *Win Proteção (Tie):* `{wins_tie}`\n"
+        f"❌ *Loss:* `{losses}`\n\n"
+        f"🚀 *ASSERTIVIDADE GLOBAL:* `{assertividade:.1f}%`\n"
+        "─────────────────────────────\n"
+        "🔄 *Ciclo concluído! Reiniciando contador para as próximas 50.*"
+    )
+
+    enviar_mensagem_telegram(mensagem)
+    registrar_log("📊 CICLO DE 50 CONCLUÍDO!", CoresTerminal.CIANO)
+    st.session_state.historico_ciclo = []
+
+def calcular_ranking_padroes():
+    ranking = []
+    min_ops = CONFIG["MIN_OPERACOES_RANKING"]
+
+    for padrao, dados in st.session_state.ranking_padroes.items():
+        if dados["total"] >= min_ops:
+            assertividade = (dados["wins"] / dados["total"]) * 100
+            ranking.append({
+                "padrao": padrao,
+                "acertos": dados["wins"],
+                "total": dados["total"],
+                "assertividade": assertividade
+            })
+    return sorted(ranking, key=lambda x: (x["assertividade"], x["total"]), reverse=True)
+
+def formatar_ranking_telegram() -> str:
+    ranking = calcular_ranking_padroes()
+    if not ranking:
+        return "🏆 *Ranking de Padrões:* Aguardando amostragem mínima."
+
+    linhas = ["🏆 *PADRÕES MAIS ASSERTIVOS DA SESSÃO:*"]
+    for i, item in enumerate(ranking[:5], 1):
+        linhas.append(
+            f"{i}. `{item['padrao']}` → *{item['assertividade']:.1f}%* "
+            f"({item['acertos']}/{item['total']})"
+        )
+    return "\n".join(linhas)
+
+def obter_texto_placar() -> str:
+    historico = st.session_state.historico_sinais
+    if not historico:
+        return "📊 *PLACAR:* Aguardando primeiras entradas..."
+
+    total = len(historico)
+    wins_direto = historico.count("WIN")
+    wins_g1 = historico.count("WIN_G1")
+    wins_tie = historico.count("WIN_TIE")
+    losses = historico.count("LOSS")
+    assertividade = ((wins_direto + wins_g1 + wins_tie) / total * 100) if total > 0 else 0
+
+    return (
+        f"📊 *PLACAR ACUMULADO ({total} entradas):*\n"
+        f"• 🎯 Win Direto: `{wins_direto}` | 🔄 Gale 1: `{wins_g1}`\n"
+        f"• 🟡 Proteção Tie: `{wins_tie}` | ❌ Loss: `{losses}`\n"
+        f"• 🚀 *Assertividade:* `{assertividade:.1f}%`"
+    )
+
+# -----------------------------------------------------------------------------
+# 📊 RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (PONTUAÇÃO 1-12)
+# -----------------------------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
 
-# 1. Inputs
 qtd_rodadas_relatorio = st.sidebar.slider(
     "Amostra de Rodadas:",
-    min_value=10,
-    max_value=200,
-    value=100,
-    step=10,
+    min_value=10, max_value=200, value=100, step=10,
     help="Define quantas rodadas do histórico recente serão usadas na análise."
 )
 
 filtro_entrada_manual = st.sidebar.multiselect(
     "Filtrar por Entradas Alvo (Sugestão):",
     options=["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"],
-    default=[],
-    help="Filtra padrões que sugerem estas cores especificamente."
+    default=[]
 )
 
 filtro_pontos_manual = st.sidebar.multiselect(
     "Filtrar por Valor Específico da Mão (1 a 12):",
     options=[str(i) for i in range(1, 13)],
-    default=[],
-    help="Exemplo: Selecione '10' ou '12' para buscar padrões que contenham esse valor específico do resultado."
+    default=[]
 )
 
-# 2. Definição da Função do Relatório
 def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: list, filtro_pontos: list):
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
 
@@ -151,9 +347,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
 
     amostra_cores = cores[-limite_rodadas:]
     amostra_compostos = compostos[-limite_rodadas:]
-    amostra_pontos = pontos[-limite_rodadas:]
 
-    # Estatísticas do TIE
     indices_tie = [i for i, c in enumerate(amostra_cores) if c == "🟡"]
     total_ties = len(indices_tie)
 
@@ -171,7 +365,6 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     else:
         txt_estatistica_tie = f"🟡 *Saídas do TIE:* Nenhum Empate nas últimas `{len(amostra_cores)}` rodadas."
 
-    # Simulação retroativa de padrões
     contagem_padroes = {}
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
 
@@ -221,7 +414,6 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     total_acertos = total_diretos + total_gales
     taxa_geral = (total_acertos / total_sinais * 100) if total_sinais > 0 else 0.0
 
-    # Mensagem Telegram
     filtros_aplicados = []
     if filtro_entradas:
         filtros_aplicados.append(f"Cores: `{', '.join(filtro_entradas)}`")
@@ -265,7 +457,6 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     else:
         return False, "❌ Falha ao enviar a mensagem ao Telegram."
 
-# 3. Botão de Disparo
 if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
     with st.spinner(f"Processando busca por valores (1-12) nas últimas {qtd_rodadas_relatorio} rodadas..."):
         sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
@@ -321,214 +512,6 @@ if st.session_state.PADROES_MANUAIS_COMPOSTOS:
             del st.session_state.PADROES_MANUAIS_COMPOSTOS[chave]
             salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
             st.rerun()
-
-# -----------------------------------------------------------------------------
-# 🧠 ESTADOS
-# -----------------------------------------------------------------------------
-def inicializar_estados():
-    estados = {
-        "sinal_ativo": False,
-        "sugestao_atual": None,
-        "tentativa": 0,
-        "ultimo_uuid_processado": None,
-        "ultimo_uuid_sinal_enviado": None,
-        "ultimo_uuid_tie_enviado": None,
-        "ultimo_uuid_tie_direto_enviado": None,
-        "historico_sinais": [],
-        "historico_ciclo": [],
-        "historico_usos": {},
-        "log_eventos": [],
-        "padrao_selecionado": None,
-        "ranking_padroes": {},
-        "ultimo_analise": None
-    }
-    for chave, valor in estados.items():
-        if chave not in st.session_state:
-            st.session_state[chave] = valor
-
-inicializar_estados()
-
-# -----------------------------------------------------------------------------
-# 📝 LOGS E RESULTADOS
-# -----------------------------------------------------------------------------
-def registrar_log(mensagem: str, cor_terminal=CoresTerminal.RESET):
-    log_terminal(mensagem, cor_terminal)
-    horario = datetime.now().strftime('%H:%M:%S')
-    st.session_state.log_eventos.insert(0, f"[{horario}] {mensagem}")
-    if len(st.session_state.log_eventos) > 50:
-        st.session_state.log_eventos.pop()
-
-def registrar_resultado(resultado: str, padrao_usado: str = None):
-    st.session_state.historico_sinais.append(resultado)
-    if len(st.session_state.historico_sinais) > 50:
-        st.session_state.historico_sinais.pop()
-
-    st.session_state.historico_ciclo.append(resultado)
-
-    if padrao_usado:
-        if padrao_usado not in st.session_state.ranking_padroes:
-            st.session_state.ranking_padroes[padrao_usado] = {"wins": 0, "total": 0}
-        
-        st.session_state.ranking_padroes[padrao_usado]["total"] += 1
-        if resultado in ["WIN", "WIN_G1", "WIN_TIE"]:
-            st.session_state.ranking_padroes[padrao_usado]["wins"] += 1
-
-    processar_fechamento_ciclo()
-
-# -----------------------------------------------------------------------------
-# 📊 FECHAMENTO DE CICLO (50 SINAIS)
-# -----------------------------------------------------------------------------
-def processar_fechamento_ciclo():
-    historico = st.session_state.historico_ciclo
-    total = len(historico)
-
-    if total < 50:
-        return
-
-    wins_diretos = historico.count("WIN")
-    wins_g1 = historico.count("WIN_G1")
-    wins_tie = historico.count("WIN_TIE")
-    losses = historico.count("LOSS")
-
-    total_wins = wins_diretos + wins_g1 + wins_tie
-    assertividade = (total_wins / total * 100) if total > 0 else 0
-
-    mensagem = (
-        "📊 *ASSERTIVIDADE FINAL - CICLO DE 50 ENTRADAS*\n\n"
-        f"🎯 *Win Direto:* `{wins_diretos}`\n"
-        f"🔄 *Win Gale 1:* `{wins_g1}`\n"
-        f"🟡 *Win Proteção (Tie):* `{wins_tie}`\n"
-        f"❌ *Loss:* `{losses}`\n\n"
-        f"🚀 *ASSERTIVIDADE GLOBAL:* `{assertividade:.1f}%`\n"
-        "─────────────────────────────\n"
-        "🔄 *Ciclo concluído! Reiniciando contador para as próximas 50.*"
-    )
-
-    enviar_mensagem_telegram(mensagem)
-    registrar_log("📊 CICLO DE 50 CONCLUÍDO!", CoresTerminal.CIANO)
-    st.session_state.historico_ciclo = []
-
-# -----------------------------------------------------------------------------
-# 🏆 RANKING FILTRADO E FORMATADO
-# -----------------------------------------------------------------------------
-def calcular_ranking_padroes():
-    ranking = []
-    min_ops = CONFIG["MIN_OPERACOES_RANKING"]
-
-    for padrao, dados in st.session_state.ranking_padroes.items():
-        if dados["total"] >= min_ops:
-            assertividade = (dados["wins"] / dados["total"]) * 100
-            ranking.append({
-                "padrao": padrao,
-                "acertos": dados["wins"],
-                "total": dados["total"],
-                "assertividade": assertividade
-            })
-    return sorted(ranking, key=lambda x: (x["assertividade"], x["total"]), reverse=True)
-
-def formatar_ranking_telegram() -> str:
-    ranking = calcular_ranking_padroes()
-    if not ranking:
-        return "🏆 *Ranking de Padrões:* Aguardando amostragem mínima."
-
-    linhas = ["🏆 *PADRÕES MAIS ASSERTIVOS DA SESSÃO:*"]
-    for i, item in enumerate(ranking[:5], 1):
-        linhas.append(
-            f"{i}. `{item['padrao']}` → *{item['assertividade']:.1f}%* "
-            f"({item['acertos']}/{item['total']})"
-        )
-    return "\n".join(linhas)
-
-def obter_texto_placar() -> str:
-    historico = st.session_state.historico_sinais
-    if not historico:
-        return "📊 *PLACAR:* Aguardando primeiras entradas..."
-
-    total = len(historico)
-    wins_direto = historico.count("WIN")
-    wins_g1 = historico.count("WIN_G1")
-    wins_tie = historico.count("WIN_TIE")
-    losses = historico.count("LOSS")
-    assertividade = ((wins_direto + wins_g1 + wins_tie) / total * 100) if total > 0 else 0
-
-    return (
-        f"📊 *PLACAR ACUMULADO ({total} entradas):*\n"
-        f"• 🎯 Win Direto: `{wins_direto}` | 🔄 Gale 1: `{wins_g1}`\n"
-        f"• 🟡 Proteção Tie: `{wins_tie}` | ❌ Loss: `{losses}`\n"
-        f"• 🚀 *Assertividade:* `{assertividade:.1f}%`"
-    )
-
-# -----------------------------------------------------------------------------
-# ✉️ TELEGRAM
-# -----------------------------------------------------------------------------
-def enviar_mensagem_telegram(texto: str) -> bool:
-    if not texto or not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        return False
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": texto,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": True
-    }
-
-    try:
-        response = requests.post(url, json=payload, timeout=CONFIG["TIMEOUT_TELEGRAM"])
-        response.raise_for_status()
-        registrar_log("✅ Mensagem enviada ao Telegram!", CoresTerminal.VERDE)
-        return True
-    except Exception as e:
-        registrar_log(f"❌ Falha no Telegram: {str(e)[:80]}", CoresTerminal.VERMELHO)
-        return False
-
-# -----------------------------------------------------------------------------
-# 🔌 BUSCA DE DADOS (API)
-# -----------------------------------------------------------------------------
-def buscar_historico_api():
-    url = (
-        f"https://api.core.public.tipminer.com/v1/bac-bo/rounds/{CONFIG['MESA_ID']}/history"
-        f"?limit={CONFIG['LIMITE_RODADAS']}&timezone={CONFIG['TIMEZONE'].replace('/', '%2F')}&_cb={uuid.uuid4()}"
-    )
-    headers = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
-
-    try:
-        response = requests.get(url, headers=headers, timeout=CONFIG["TIMEOUT_API"])
-        if response.status_code != 200:
-            return [], [], [], [], []
-
-        dados = response.json()
-        if not isinstance(dados, list):
-            return [], [], [], [], []
-
-        cores, uuids, pontos, compostos, exibicao_rodadas = [], [], [], [], []
-        for item in dados:
-            tipo = str(item.get("type", "")).upper()
-            uuid_r = item.get("uuid", "")
-            ponto = item.get("result", 0)
-
-            if "BANKER" in tipo or "RED" in tipo:
-                cor, nome = "🔴", "BANKER"
-            elif "PLAYER" in tipo or "BLUE" in tipo:
-                cor, nome = "🔵", "PLAYER"
-            elif "TIE" in tipo or "YELLOW" in tipo:
-                cor, nome = "🟡", "TIE"
-            else:
-                continue
-
-            if not uuid_r:
-                continue
-
-            cores.append(cor)
-            uuids.append(uuid_r)
-            pontos.append(ponto)
-            compostos.append(f"{cor} {ponto}")
-            exibicao_rodadas.append(f"{cor} ({ponto})")
-
-        return cores[::-1], uuids[::-1], pontos[::-1], compostos[::-1], exibicao_rodadas[::-1]
-
-    except Exception:
-        return [], [], [], [], []
 
 # -----------------------------------------------------------------------------
 # 🧠 BUSCA HÍBRIDA (PADRÕES FIXOS -> COMPOSTOS -> CORES)
@@ -671,7 +654,6 @@ def verificar_resultado(ultimo_resultado: str, ponto_resultado: int = None):
         tipo_win = "WIN_TIE" if ultimo_resultado == "🟡" else ("WIN" if st.session_state.tentativa == 1 else "WIN_G1")
         registrar_resultado(tipo_win, padrao_usado)
         
-        # 🟡 REGRA ESPECIAL DE ENTRADA SUGERIDA EM TIE
         if eh_sugestao_tie:
             if st.session_state.tentativa == 1:
                 enviar_mensagem_telegram(
@@ -679,8 +661,6 @@ def verificar_resultado(ultimo_resultado: str, ponto_resultado: int = None):
                 )
             else:
                 registrar_log("TIE acertado no Gale (Silencioso - sem mensagem no Telegram).", CoresTerminal.AMARELO)
-
-        # 🔴/🔵 REGRAS NORMAIS (BANKER / PLAYER)
         else:
             if tipo_win == "WIN_TIE":
                 txt_win = f"WIN_TIE {texto_resultado_com_ponto}"
@@ -718,7 +698,7 @@ def verificar_resultado(ultimo_resultado: str, ponto_resultado: int = None):
         st.session_state.padrao_selecionado = None
 
 # -----------------------------------------------------------------------------
-# 🔄 LOOP PRINCIPAL
+# 🔄 LOOP PRINCIPAL DE PROCESSAMENTO
 # -----------------------------------------------------------------------------
 def processar_rodada():
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
@@ -771,15 +751,25 @@ def processar_rodada():
                 registrar_log(f"SINAL ENVIADO: {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
 
 # -----------------------------------------------------------------------------
-# 🖥️ INTERFACE PAINEL
+# 🖥️ INTERFACE DASHBOARD STREAMLIT
 # -----------------------------------------------------------------------------
 st.title("🤖 Monitor Bac-Bo VIP")
 
+col_btn1, col_btn2 = st.sidebar.columns(2)
+if col_btn1.button("▶️ Ligar Robô"):
+    st.session_state.bot_rodando = True
+    st.rerun()
+
+if col_btn2.button("⏸️ Pausar Robô"):
+    st.session_state.bot_rodando = False
+    st.rerun()
+
 col1, col2, col3, col4 = st.columns(4)
-col1.metric("Status", "🔴 ATIVO" if st.session_state.sinal_ativo else "🟢 AGUARDANDO")
-col2.metric("Entrada", st.session_state.sugestao_atual or "—")
+status_str = "🟢 MONITORANDO" if st.session_state.bot_rodando else "🔴 PAUSADO"
+col1.metric("Status do Robô", status_str)
+col2.metric("Entrada Atual", st.session_state.sugestao_atual or "—")
 col3.metric("Tentativa", f"Gale {st.session_state.tentativa - 1}" if st.session_state.tentativa > 1 else "1ª Entrada")
-col4.metric("Padrão em Uso", f"`{st.session_state.padrao_selecionado}`" if st.session_state.padrao_selecionado else "—")
+col4.metric("Padrão em Uso", f"{st.session_state.padrao_selecionado}" if st.session_state.padrao_selecionado else "—")
 
 st.subheader("🏆 Ranking de Padrões Mais Assertivos")
 ranking = calcular_ranking_padroes()
@@ -803,8 +793,11 @@ else:
 st.subheader("📋 Logs do Sistema")
 log_container = st.empty()
 
-processar_rodada()
-log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
-
-time.sleep(CONFIG["INTERVALO_VERIFICACAO"])
-st.rerun()
+# Executa o loop principal apenas se o bot estiver marcado como ativo
+if st.session_state.bot_rodando:
+    processar_rodada()
+    log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
+    time.sleep(CONFIG["INTERVALO_VERIFICACAO"])
+    st.rerun()
+else:
+    log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
