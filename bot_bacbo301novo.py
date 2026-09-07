@@ -371,29 +371,29 @@ entrada_alvo_digitada = st.sidebar.text_input(
 def processar_filtro_digitado(texto_input: str):
     """
     Interpreta o que o usuário digitou no campo de busca.
-    Separa valores numéricos (1 a 12) e entradas/cores.
+    Extrai números (1 a 12) mesmo com palavras como 'Tier', 'Ponto' e separa as entradas.
+    Validado para PLAYER, BANKER e TIE.
     """
     if not texto_input:
         return [], []
 
-    partes = [p.strip().upper() for p in texto_input.replace(";", ",").split(",") if p.strip()]
+    texto_upper = texto_input.upper()
     
     filtro_entradas = []
     filtro_pontos = []
 
-    for parte in partes:
-        if parte in ["8", "1", "2", "3", "4", "5", "6", "7", "9", "10", "11", "12"]:
-            filtro_pontos.append(parte)
-        elif "RED" in parte or "BANKER" in parte or "🔴" in parte or "VERMELHO" in parte:
-            filtro_entradas.append("🔴 BANKER")
-        elif "BLUE" in parte or "PLAYER" in parte or "🔵" in parte or "AZUL" in parte:
-            filtro_entradas.append("🔵 PLAYER")
-        elif "YELLOW" in parte or "TIE" in parte or "🟡" in parte or "EMPATE" in parte:
-            filtro_entradas.append("🟡 TIE")
-        elif parte.isdigit():
-            val = int(parte)
-            if 1 <= val <= 12:
-                filtro_pontos.append(str(val))
+    # Extrai cores/entradas (Banker, Player ou Tie/Empate)
+    if "RED" in texto_upper or "BANKER" in texto_upper or "🔴" in texto_upper or "VERMELHO" in texto_upper:
+        filtro_entradas.append("🔴 BANKER")
+    if "BLUE" in texto_upper or "PLAYER" in texto_upper or "🔵" in texto_upper or "AZUL" in texto_upper:
+        filtro_entradas.append("🔵 PLAYER")
+    if "YELLOW" in texto_upper or "TIE" in texto_upper or "TIER" in texto_upper or "🟡" in texto_upper or "EMPATE" in texto_upper:
+        filtro_entradas.append("🟡 TIE")
+
+    # Extrai qualquer número de 1 a 12 presente no texto (ex: 'Tier 8', 'Ponto 10', '8')
+    numeros_encontrados = re.findall(r'\b(1[0-2]|[1-9])\b', texto_input)
+    for num in numeros_encontrados:
+        filtro_pontos.append(num)
 
     return list(set(filtro_entradas)), list(set(filtro_pontos))
 
