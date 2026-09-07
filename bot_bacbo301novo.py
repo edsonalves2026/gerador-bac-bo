@@ -219,6 +219,82 @@ def buscar_historico_api():
         return [], [], [], [], []
 
 # -----------------------------------------------------------------------------
+# 🧠 BUSCA HÍBRIDA (DEFINIDA ANTES DE SER USADA NO RELATÓRIO)
+# -----------------------------------------------------------------------------
+def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
+    tamanho_p = CONFIG["TAMANHO_PADRAO"]
+    MINIMO_OCORRENCIAS = 3
+
+    if len(historico_cores) < 5:
+        return None, 0.0, 0.0, None
+
+    # 0º TESTE: VALIDAÇÃO DE PADRÕES FIXOS / MANUAIS
+    for chave, item in st.session_state.PADROES_MANUAIS_COMPOSTOS.items():
+        if not item.get("ativo", True):
+            continue
+
+        padrao_fixo = item["padrao"]
+        tam_fixo = len(padrao_fixo)
+
+        if len(historico_cores) < tam_fixo:
+            continue
+
+        eh_composto = any(" " in elem for elem in padrao_fixo)
+        fatia_atual = historico_compostos[-tam_fixo:] if eh_composto else historico_cores[-tam_fixo:]
+
+        if fatia_atual == padrao_fixo:
+            sugestao = item["sugestao"]
+            padrao_str = f"📌 FIXO [{chave}]: {' | '.join(padrao_fixo)}"
+            return sugestao, 100.0, 100.0, padrao_str
+
+    # Função auxiliar estatística
+    def buscar_frequencia(lista_historico, padrao_procurado):
+        total, verm, azul = 0, 0, 0
+        tam = len(padrao_procurado)
+        
+        for i in range(len(lista_historico) - tam):
+            if lista_historico[i : i + tam] == padrao_procurado:
+                proximo = historico_cores[i + tam]
+                total += 1
+                if proximo == "🔴":
+                    verm += 1
+                elif proximo == "🔵":
+                    azul += 1
+
+        if total < MINIMO_OCORRENCIAS:
+            return 0.0, 0.0, total
+
+        return (verm / total) * 100, (azul / total) * 100, total
+
+    # 1º TESTE ESTATÍSTICO: Padrão COMPOSTO (Cor + Número)
+    if len(historico_compostos) >= tamanho_p:
+        padrao_comp = historico_compostos[-tamanho_p:]
+        prob_r_comp, prob_b_comp, oc_comp = buscar_frequencia(historico_compostos, padrao_comp)
+
+        if oc_comp >= MINIMO_OCORRENCIAS:
+            padrao_comp_str = " | ".join(padrao_comp)
+            if prob_r_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
+                return "🔴", round(prob_r_comp, 1), round(prob_r_comp, 1), padrao_comp_str
+            if prob_b_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
+                return "🔵", round(prob_b_comp, 1), round(prob_b_comp, 1), padrao_comp_str
+
+    # 2º TESTE ESTATÍSTICO: Padrão por CORES
+    if len(historico_cores) >= tamanho_p:
+        padrao_cor = historico_cores[-tamanho_p:]
+        prob_r_30, prob_b_30, _ = buscar_frequencia(historico_cores[-30:], padrao_cor)
+        prob_r_tot, prob_b_tot, oc_tot = buscar_frequencia(historico_cores, padrao_cor)
+
+        padrao_cor_str = " | ".join(padrao_cor)
+
+        if oc_tot >= MINIMO_OCORRENCIAS:
+            if prob_r_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
+                return "🔴", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_cor_str
+            if prob_b_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
+                return "🔵", round(prob_r_30, 1), round(prob_b_tot, 1), padrao_cor_str
+
+    return None, 0.0, 0.0, None
+
+# -----------------------------------------------------------------------------
 # 📝 PLACAR E CICLO DE ENTRADAS
 # -----------------------------------------------------------------------------
 def registrar_resultado(resultado: str, padrao_usado: str = None):
@@ -316,7 +392,7 @@ def obter_texto_placar() -> str:
     )
 
 # -----------------------------------------------------------------------------
-# 📊 RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (PONTUAÇÃO 1-12)
+# 📊 RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO
 # -----------------------------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
@@ -514,94 +590,6 @@ if st.session_state.PADROES_MANUAIS_COMPOSTOS:
             st.rerun()
 
 # -----------------------------------------------------------------------------
-# 🧠 BUSCA HÍBRIDA (PADRÕES FIXOS -> COMPOSTOS -> CORES)
-# -----------------------------------------------------------------------------
-def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
-    tamanho_p = CONFIG["TAMANHO_PADRAO"]
-    MINIMO_OCORRENCIAS = 3
-
-    if len(historico_cores) < 50:
-        return None, 0.0, 0.0, None
-
-    # =========================================================================
-    # 0º TESTE: VALIDAÇÃO DE PADRÕES FIXOS / MANUAIS (PRIORIDADE MÁXIMA)
-    # =========================================================================
-    for chave, item in st.session_state.PADROES_MANUAIS_COMPOSTOS.items():
-        if not item.get("ativo", False):
-            continue
-
-        padrao_fixo = item["padrao"]
-        tam_fixo = len(padrao_fixo)
-
-        if len(historico_cores) < tam_fixo:
-            continue
-
-        eh_composto = any(" " in elem for elem in padrao_fixo)
-        fatia_atual = historico_compostos[-tam_fixo:] if eh_composto else historico_cores[-tam_fixo:]
-
-        if fatia_atual == padrao_fixo:
-            sugestao = item["sugestao"]
-            padrao_str = f"📌 FIXO [{chave}]: {' | '.join(padrao_fixo)}"
-            registrar_log(f"🎯 Padrão Fixo Detectado: {chave}", CoresTerminal.AMARELO)
-            return sugestao, 100.0, 100.0, padrao_str
-
-    # Função auxiliar genérica para estatística dinâmica
-    def buscar_frequencia(lista_historico, padrao_procurado):
-        total, verm, azul = 0, 0, 0
-        tam = len(padrao_procurado)
-        
-        for i in range(len(lista_historico) - tam):
-            if lista_historico[i : i + tam] == padrao_procurado:
-                proximo = historico_cores[i + tam]
-                total += 1
-                if proximo == "🔴":
-                    verm += 1
-                elif proximo == "🔵":
-                    azul += 1
-
-        if total < MINIMO_OCORRENCIAS:
-            return 0.0, 0.0, total
-
-        return (verm / total) * 100, (azul / total) * 100, total
-
-    # =========================================================================
-    # 1º TESTE ESTATÍSTICO: Padrão COMPOSTO (Cor + Número)
-    # =========================================================================
-    padrao_comp = historico_compostos[-tamanho_p:]
-    prob_r_comp, prob_b_comp, oc_comp = buscar_frequencia(historico_compostos, padrao_comp)
-
-    if oc_comp >= MINIMO_OCORRENCIAS:
-        padrao_comp_str = " | ".join(padrao_comp)
-        if prob_r_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
-            return "🔴", round(prob_r_comp, 1), round(prob_r_comp, 1), padrao_comp_str
-        if prob_b_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
-            return "🔵", round(prob_b_comp, 1), round(prob_b_comp, 1), padrao_comp_str
-
-    # =========================================================================
-    # 2º TESTE ESTATÍSTICO: Padrão por CORES (Fallback)
-    # =========================================================================
-    padrao_cor = historico_cores[-tamanho_p:]
-    prob_r_30, prob_b_30, _ = buscar_frequencia(historico_cores[-30:], padrao_cor)
-    prob_r_tot, prob_b_tot, oc_tot = buscar_frequencia(historico_cores, padrao_cor)
-
-    padrao_cor_str = " | ".join(padrao_cor)
-    
-    st.session_state.ultimo_analise = {
-        "padrao": padrao_cor_str,
-        "prob30_r": round(prob_r_30, 1), "prob30_b": round(prob_b_30, 1),
-        "prob50_r": round(prob_r_tot, 1), "prob50_b": round(prob_b_tot, 1),
-        "tamanho": tamanho_p
-    }
-
-    if oc_tot >= MINIMO_OCORRENCIAS:
-        if prob_r_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
-            return "🔴", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_cor_str
-        if prob_b_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
-            return "🔵", round(prob_b_30, 1), round(prob_b_tot, 1), padrao_cor_str
-
-    return None, 0.0, 0.0, None
-
-# -----------------------------------------------------------------------------
 # 📈 ESTUDO DE TIE
 # -----------------------------------------------------------------------------
 def calcular_estudo_tie(historico_cores: list) -> str:
@@ -793,7 +781,7 @@ else:
 st.subheader("📋 Logs do Sistema")
 log_container = st.empty()
 
-# Executa o loop principal apenas se o bot estiver marcado como ativo
+# Executa o loop principal apenas se o bot estiver ativo
 if st.session_state.bot_rodando:
     processar_rodada()
     log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
