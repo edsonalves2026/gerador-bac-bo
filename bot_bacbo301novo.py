@@ -80,7 +80,7 @@ INTERVALO_VERIFICACAO = st.sidebar.slider(
 
 SENSIBILIDADE_MINIMA = st.sidebar.slider(
     "🎯 Sensibilidade Mínima (%)",
-    min_value=50.0, max_value=95.0, value=70.0, step=1.0
+    min_value=50.0, max_value=95.0, value=65.0, step=1.0
 )
 
 TAMANHO_PADRAO = st.sidebar.slider(
@@ -124,14 +124,11 @@ def inicializar_estados():
         "ultimo_uuid_processado": None,
         "ultimo_uuid_sinal_enviado": None,
         "ultimo_uuid_tie_enviado": None,
-        "ultimo_uuid_tie_direto_enviado": None,
         "historico_sinais": [],
         "historico_ciclo": [],
-        "historico_usos": {},
         "log_eventos": [],
         "padrao_selecionado": None,
-        "ranking_padroes": {},
-        "ultimo_analise": None
+        "ranking_padroes": {}
     }
     for chave, valor in estados.items():
         if chave not in st.session_state:
@@ -228,7 +225,6 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     if len(historico_cores) < 5:
         return None, 0.0, 0.0, None
 
-    # 0º TESTE: VALIDAÇÃO DE PADRÕES FIXOS / MANUAIS
     for chave, item in st.session_state.PADROES_MANUAIS_COMPOSTOS.items():
         if not item.get("ativo", True):
             continue
@@ -247,7 +243,6 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
             padrao_str = f"📌 FIXO [{chave}]: {' | '.join(padrao_fixo)}"
             return sugestao, 100.0, 100.0, padrao_str
 
-    # Função auxiliar estatística
     def buscar_frequencia(lista_historico, padrao_procurado):
         total, verm, azul = 0, 0, 0
         tam = len(padrao_procurado)
@@ -266,7 +261,6 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
 
         return (verm / total) * 100, (azul / total) * 100, total
 
-    # 1º TESTE ESTATÍSTICO: Padrão COMPOSTO (Cor + Número)
     if len(historico_compostos) >= tamanho_p:
         padrao_comp = historico_compostos[-tamanho_p:]
         prob_r_comp, prob_b_comp, oc_comp = buscar_frequencia(historico_compostos, padrao_comp)
@@ -278,7 +272,6 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
             if prob_b_comp >= CONFIG["SENSIBILIDADE_MINIMA"]:
                 return "🔵", round(prob_b_comp, 1), round(prob_b_comp, 1), padrao_comp_str
 
-    # 2º TESTE ESTATÍSTICO: Padrão por CORES
     if len(historico_cores) >= tamanho_p:
         padrao_cor = historico_cores[-tamanho_p:]
         prob_r_30, prob_b_30, _ = buscar_frequencia(historico_cores[-30:], padrao_cor)
@@ -295,7 +288,7 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     return None, 0.0, 0.0, None
 
 # -----------------------------------------------------------------------------
-# 📝 PLACAR E CICLO DE ENTRADAS
+# 📝 PLACAR
 # -----------------------------------------------------------------------------
 def registrar_resultado(resultado: str, padrao_usado: str = None):
     st.session_state.historico_sinais.append(resultado)
@@ -311,38 +304,6 @@ def registrar_resultado(resultado: str, padrao_usado: str = None):
         st.session_state.ranking_padroes[padrao_usado]["total"] += 1
         if resultado in ["WIN", "WIN_G1", "WIN_TIE"]:
             st.session_state.ranking_padroes[padrao_usado]["wins"] += 1
-
-    processar_fechamento_ciclo()
-
-def processar_fechamento_ciclo():
-    historico = st.session_state.historico_ciclo
-    total = len(historico)
-
-    if total < 50:
-        return
-
-    wins_diretos = historico.count("WIN")
-    wins_g1 = historico.count("WIN_G1")
-    wins_tie = historico.count("WIN_TIE")
-    losses = historico.count("LOSS")
-
-    total_wins = wins_diretos + wins_g1 + wins_tie
-    assertividade = (total_wins / total * 100) if total > 0 else 0
-
-    mensagem = (
-        "📊 *ASSERTIVIDADE FINAL - CICLO DE 50 ENTRADAS*\n\n"
-        f"🎯 *Win Direto:* `{wins_diretos}`\n"
-        f"🔄 *Win Gale 1:* `{wins_g1}`\n"
-        f"🟡 *Win Proteção (Tie):* `{wins_tie}`\n"
-        f"❌ *Loss:* `{losses}`\n\n"
-        f"🚀 *ASSERTIVIDADE GLOBAL:* `{assertividade:.1f}%`\n"
-        "─────────────────────────────\n"
-        "🔄 *Ciclo concluído! Reiniciando contador para as próximas 50.*"
-    )
-
-    enviar_mensagem_telegram(mensagem)
-    registrar_log("📊 CICLO DE 50 CONCLUÍDO!", CoresTerminal.CIANO)
-    st.session_state.historico_ciclo = []
 
 def calcular_ranking_padroes():
     ranking = []
@@ -392,15 +353,14 @@ def obter_texto_placar() -> str:
     )
 
 # -----------------------------------------------------------------------------
-# 📊 RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (LÓGICA HÍBRIDA / BUSCA DIRETA)
+# 📊 RELATÓRIO MANUAL DE ASSERTIVIDADE
 # -----------------------------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
 
 qtd_rodadas_relatorio = st.sidebar.slider(
     "Amostra de Rodadas:",
-    min_value=10, max_value=200, value=200, step=10,
-    help="Define quantas rodadas do histórico recente serão usadas na análise."
+    min_value=10, max_value=200, value=200, step=10
 )
 
 filtro_entrada_manual = st.sidebar.multiselect(
@@ -425,7 +385,6 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     amostra_pontos = pontos[-limite_rodadas:]
     amostra_compostos = compostos[-limite_rodadas:]
 
-    # Estatística de TIE
     indices_tie = [i for i, c in enumerate(amostra_cores) if c == "🟡"]
     total_ties = len(indices_tie)
 
@@ -445,13 +404,8 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
 
     contagem_padroes = {}
 
-    # =========================================================================
-    # MODO 1: BUSCA DIRETA QUANDO O USUÁRIO SELECIONA PONTUAÇÃO (EX: PLAYER 4)
-    # =========================================================================
     if filtro_pontos:
         pontos_alvo = [int(p) for p in filtro_pontos]
-        
-        # Mapeia quais cores verificar baseado no filtro ou assume todas
         cores_alvo = []
         if filtro_entradas:
             if "🔴 BANKER" in filtro_entradas: cores_alvo.append("🔴")
@@ -464,11 +418,8 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
             cor_atual = amostra_cores[i]
             ponto_atual = amostra_pontos[i]
 
-            # Verifica se essa rodada foi a carta/pontuação desejada (ex: PLAYER 4)
             if ponto_atual in pontos_alvo and cor_atual in cores_alvo:
                 chave_padrao = f"Mão Gatilho: {cor_atual} ({ponto_atual})"
-                
-                # A sugestão de aposta padrão após um gatilho é a cor da entrada selecionada ou repetição
                 sugestao_alvo = cores_alvo[0] if len(cores_alvo) == 1 else cor_atual
                 nome_sugestao = "🔴 BANKER" if sugestao_alvo == "🔴" else ("🔵 PLAYER" if sugestao_alvo == "🔵" else "🟡 TIE")
 
@@ -482,19 +433,13 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
 
                 contagem_padroes[chave_padrao]["total"] += 1
 
-                # Verifica o resultado na rodada seguinte (1ª Entrada)
                 res_1 = amostra_cores[i + 1]
                 if res_1 == sugestao_alvo or res_1 == "🟡":
                     contagem_padroes[chave_padrao]["acertos_direto"] += 1
                 elif i + 2 < len(amostra_cores):
-                    # Verifica no Gale 1
                     res_2 = amostra_cores[i + 2]
                     if res_2 == sugestao_alvo or res_2 == "🟡":
                         contagem_padroes[chave_padrao]["acertos_gale"] += 1
-
-    # =========================================================================
-    # MODO 2: BUSCA POR PADRÕES DINÂMICOS (SE NÃO FILTRAR POR PONTUAÇÃO)
-    # =========================================================================
     else:
         tamanho_p = CONFIG["TAMANHO_PADRAO"]
         for i in range(tamanho_p, len(amostra_cores) - 1):
@@ -582,7 +527,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
         return False, "❌ Falha ao enviar a mensagem ao Telegram."
 
 if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
-    with st.spinner(f"Processando busca por valores ({', '.join(filtro_pontos_manual) if filtro_pontos_manual else 'Geral'}) nas últimas {qtd_rodadas_relatorio} rodadas..."):
+    with st.spinner("Processando histórico..."):
         sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
             qtd_rodadas_relatorio,
             filtro_entrada_manual,
@@ -594,147 +539,7 @@ if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
             st.sidebar.warning(msg_status)
 
 # -----------------------------------------------------------------------------
-# 📌 GERENCIADOR DE PADRÕES FIXOS NA SIDEBAR
-# -----------------------------------------------------------------------------
-st.sidebar.divider()
-st.sidebar.subheader("📌 Cadastrar Padrão Fixo Manual")
-
-with st.sidebar.form("form_novo_padrao", clear_on_submit=True):
-    nome_padrao = st.text_input("Nome do Padrão", placeholder="Ex: Duplo 10 e 8")
-    sequencia_input = st.text_input(
-        "Sequência (separada por vírgula)", 
-        placeholder="Ex: 🔴 10, 🔵 8 ou 🔴, 🔴"
-    )
-    sugestao_entrada = st.selectbox("Entrada Recomendada", ["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"])
-    btn_salvar = st.form_submit_button("➕ Salvar Padrão Fixo")
-
-    if btn_salvar and sequencia_input and nome_padrao:
-        lista_seq = [item.strip() for item in sequencia_input.split(",")]
-        
-        if "BANKER" in sugestao_entrada:
-            cor_sugestao, nome_sugestao = "🔴", "BANKER"
-        elif "PLAYER" in sugestao_entrada:
-            cor_sugestao, nome_sugestao = "🔵", "PLAYER"
-        else:
-            cor_sugestao, nome_sugestao = "🟡", "TIE"
-
-        st.session_state.PADROES_MANUAIS_COMPOSTOS[nome_padrao] = {
-            "padrao": lista_seq,
-            "sugestao": cor_sugestao,
-            "nome_sugestao": nome_sugestao,
-            "ativo": True
-        }
-        salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
-        st.sidebar.success(f"Padrão '{nome_padrao}' salvo!")
-
-if st.session_state.PADROES_MANUAIS_COMPOSTOS:
-    st.sidebar.markdown("**Padrões Salvos:**")
-    for chave, item in list(st.session_state.PADROES_MANUAIS_COMPOSTOS.items()):
-        seq_txt = " | ".join(item["padrao"])
-        st.sidebar.text(f"• {chave}: [{seq_txt}] ➔ {item['sugestao']}")
-        if st.sidebar.button(f"🗑️ Remover {chave}", key=f"del_{chave}"):
-            del st.session_state.PADROES_MANUAIS_COMPOSTOS[chave]
-            salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
-            st.rerun()
-
-# -----------------------------------------------------------------------------
-# 📈 ESTUDO DE TIE
-# -----------------------------------------------------------------------------
-def calcular_estudo_tie(historico_cores: list) -> str:
-    if "🟡" not in historico_cores or len(historico_cores) < 50:
-        return "⚪ *Status Tie:* Dados insuficientes."
-
-    indices = [i for i, c in enumerate(historico_cores) if c == "🟡"]
-    distancia = (len(historico_cores) - 1) - indices[-1]
-    gaps = [indices[i] - indices[i-1] - 1 for i in range(1, len(indices))]
-    vezes = Counter(gaps).get(distancia, 0)
-
-    if vezes >= 2:
-        return f"🔥 *PROBABILIDADE ALTA!* `{distancia}R` sem Tie ocorreu `{vezes}x`."
-    if distancia <= 3:
-        return f"⚡ *ZONA DE ECO!* Apenas `{distancia}R` desde o último Tie."
-    return f"📊 *Status Normal:* `{distancia}R` sem Tie (freq: {vezes}x)."
-
-def verificar_radar_tie_aquecido(historico_cores: list, uuid_atual: str):
-    if len(historico_cores) < 50 or "🟡" not in historico_cores[-20:]:
-        return
-    if st.session_state.get("ultimo_uuid_tie_enviado") == uuid_atual:
-        return
-
-    dist = (len(historico_cores) - 1) - [i for i, c in enumerate(historico_cores) if c == "🟡"][-1]
-    if dist in [0, 1, 2, 3, 17]:
-        st.session_state["ultimo_uuid_tie_enviado"] = uuid_atual
-        enviar_mensagem_telegram(
-            f"⚠️ *RADAR TIE - ZONA AQUECIDA* 🟡\n"
-            f"• Distância Atual: `{dist}R` sem Empate.\n"
-            f"💡 Considere reforçar a cobertura no TIE."
-        )
-
-# -----------------------------------------------------------------------------
-# ✅ VERIFICAÇÃO DE RESULTADO
-# -----------------------------------------------------------------------------
-def verificar_resultado(ultimo_resultado: str, ponto_resultado: int = None):
-    if not st.session_state.sinal_ativo:
-        return
-
-    esperado = st.session_state.sugestao_atual
-    padrao_usado = st.session_state.padrao_selecionado
-    eh_sugestao_tie = (esperado == "🟡")
-    acertou = (ultimo_resultado == esperado) or (ultimo_resultado == "🟡")
-
-    texto_resultado_com_ponto = (
-        f"{ultimo_resultado} ({ponto_resultado})" if ponto_resultado is not None else ultimo_resultado
-    )
-
-    if acertou:
-        tipo_win = "WIN_TIE" if ultimo_resultado == "🟡" else ("WIN" if st.session_state.tentativa == 1 else "WIN_G1")
-        registrar_resultado(tipo_win, padrao_usado)
-        
-        if eh_sugestao_tie:
-            if st.session_state.tentativa == 1:
-                enviar_mensagem_telegram(
-                    f"🏆 *VICTORY TIE BRK*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}"
-                )
-            else:
-                registrar_log("TIE acertado no Gale (Silencioso - sem mensagem no Telegram).", CoresTerminal.AMARELO)
-        else:
-            if tipo_win == "WIN_TIE":
-                txt_win = f"WIN_TIE {texto_resultado_com_ponto}"
-            elif tipo_win == "WIN":
-                txt_win = "WIN DIRETO! 🎯"
-            else:
-                txt_win = "WIN NO GALE 1! 🎯"
-
-            enviar_mensagem_telegram(
-                f"✅ *{txt_win}*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}"
-            )
-        
-        st.session_state.sinal_ativo = False
-        st.session_state.padrao_selecionado = None
-
-    elif st.session_state.tentativa == 1:
-        st.session_state.tentativa = 2
-        
-        if not eh_sugestao_tie:
-            enviar_mensagem_telegram(f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}")
-        else:
-            registrar_log("Sugestão TIE errou a 1ª tentativa (Silencioso - sem Gale no Telegram).", CoresTerminal.AMARELO)
-
-    else:
-        registrar_resultado("LOSS", padrao_usado)
-        
-        if not eh_sugestao_tie:
-            enviar_mensagem_telegram(
-                f"❌ *LOSS CONFIRMADO*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}"
-            )
-        else:
-            registrar_log("Sugestão TIE deu LOSS (Silencioso - sem mensagem no Telegram).", CoresTerminal.VERMELHO)
-
-        st.session_state.sinal_ativo = False
-        st.session_state.padrao_selecionado = None
-
-# -----------------------------------------------------------------------------
-# 🔄 LOOP PRINCIPAL DE PROCESSAMENTO
+# 🔄 LEITURA CONTÍNUA E PROCESSAMENTO DE RODADAS
 # -----------------------------------------------------------------------------
 def processar_rodada():
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
@@ -742,49 +547,73 @@ def processar_rodada():
         return
 
     uuid_atual = uuids[-1]
+    
+    # Registra a rodada nos logs SEMPRE (mesmo se pausado)
     if uuid_atual != st.session_state.ultimo_uuid_processado:
         st.session_state.ultimo_uuid_processado = uuid_atual
         registrar_log(f"Nova rodada: {exibicao[-1]}", CoresTerminal.AZUL)
 
-    ultimo_resultado = cores[-1]
-    ultimo_ponto = pontos[-1]
+    # Lógica de sinais ativa APENAS quando bot está LIGADO
+    if st.session_state.bot_rodando:
+        ultimo_resultado = cores[-1]
+        ultimo_ponto = pontos[-1]
 
-    verificar_radar_tie_aquecido(cores, uuid_atual)
+        if st.session_state.sinal_ativo:
+            verificar_resultado(ultimo_resultado, ultimo_ponto)
 
-    if st.session_state.sinal_ativo:
-        verificar_resultado(ultimo_resultado, ultimo_ponto)
+        if not st.session_state.sinal_ativo:
+            sugestao, prob30, prob50, padrao = analisar_multi_amostra(cores, compostos)
 
+            if sugestao and st.session_state.ultimo_uuid_sinal_enviado != uuid_atual:
+                st.session_state.sinal_ativo = True
+                st.session_state.sugestao_atual = sugestao
+                st.session_state.tentativa = 1
+                st.session_state.padrao_selecionado = padrao
+                st.session_state.ultimo_uuid_sinal_enviado = uuid_atual
+
+                nome_cor = "🔴 BANKER" if sugestao == "🔴" else ("🔵 PLAYER" if sugestao == "🔵" else "🟡 TIE")
+
+                mensagem = (
+                    "🤖 *BAC BO PRO - SINAL VIP CONFIRMADO*\n\n"
+                    f"🎯 *ENTRADA PRINCIPAL:* {nome_cor}\n"
+                    "🛡️ *PROTEÇÃO:* 🟡 TIE (Empate)\n"
+                    "🔄 *GESTÃO:* Até Gale 1\n\n"
+                    f"🔍 *PADRÃO IDENTIFICADO:*\n`{padrao}`\n\n"
+                    f"📊 *ASSERTIVIDADE:* 30R: `{prob30:.1f}%` | 50R: `{prob50:.1f}%`\n\n"
+                    f"{formatar_ranking_telegram()}\n\n"
+                    f"{obter_texto_placar()}"
+                )
+
+                if enviar_mensagem_telegram(mensagem):
+                    registrar_log(f"SINAL ENVIADO: {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
+
+def verificar_resultado(ultimo_resultado: str, ponto_resultado: int = None):
     if not st.session_state.sinal_ativo:
-        sugestao, prob30, prob50, padrao = analisar_multi_amostra(cores, compostos)
+        return
 
-        if sugestao and st.session_state.ultimo_uuid_sinal_enviado != uuid_atual:
-            st.session_state.sinal_ativo = True
-            st.session_state.sugestao_atual = sugestao
-            st.session_state.tentativa = 1
-            st.session_state.padrao_selecionado = padrao
-            st.session_state.ultimo_uuid_sinal_enviado = uuid_atual
+    esperado = st.session_state.sugestao_atual
+    padrao_usado = st.session_state.padrao_selecionado
+    acertou = (ultimo_resultado == esperado) or (ultimo_resultado == "🟡")
 
-            if sugestao == "🔴":
-                nome_cor = "🔴 BANKER"
-            elif sugestao == "🔵":
-                nome_cor = "🔵 PLAYER"
-            else:
-                nome_cor = "🟡 TIE"
-            
-            mensagem = (
-                "🤖 *BAC BO PRO - SINAL VIP CONFIRMADO*\n\n"
-                f"🎯 *ENTRADA PRINCIPAL:* {nome_cor}\n"
-                "🛡️ *PROTEÇÃO:* 🟡 TIE (Empate)\n"
-                "🔄 *GESTÃO:* Até Gale 1\n\n"
-                f"🔍 *PADRÃO IDENTIFICADO:*\n`{padrao}`\n\n"
-                f"📊 *ASSERTIVIDADE:* 30R: `{prob30:.1f}%` | 50R: `{prob50:.1f}%`\n\n"
-                f"{calcular_estudo_tie(cores)}\n\n"
-                f"{formatar_ranking_telegram()}\n\n"
-                f"{obter_texto_placar()}"
-            )
+    texto_resultado_com_ponto = f"{ultimo_resultado} ({ponto_resultado})" if ponto_resultado is not None else ultimo_resultado
 
-            if enviar_mensagem_telegram(mensagem):
-                registrar_log(f"SINAL ENVIADO: {nome_cor} | Padrão: {padrao}", CoresTerminal.VERDE)
+    if acertou:
+        tipo_win = "WIN_TIE" if ultimo_resultado == "🟡" else ("WIN" if st.session_state.tentativa == 1 else "WIN_G1")
+        registrar_resultado(tipo_win, padrao_usado)
+        txt_win = "WIN DIRETO! 🎯" if tipo_win == "WIN" else ("WIN NO GALE 1! 🎯" if tipo_win == "WIN_G1" else f"WIN_TIE {texto_resultado_com_ponto}")
+        
+        enviar_mensagem_telegram(f"✅ *{txt_win}*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}")
+        st.session_state.sinal_ativo = False
+        st.session_state.padrao_selecionado = None
+
+    elif st.session_state.tentativa == 1:
+        st.session_state.tentativa = 2
+        enviar_mensagem_telegram(f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}")
+    else:
+        registrar_resultado("LOSS", padrao_usado)
+        enviar_mensagem_telegram(f"❌ *LOSS CONFIRMADO*\nResultado: `{texto_resultado_com_ponto}`\n\n{obter_texto_placar()}")
+        st.session_state.sinal_ativo = False
+        st.session_state.padrao_selecionado = None
 
 # -----------------------------------------------------------------------------
 # 🖥️ INTERFACE DASHBOARD STREAMLIT
@@ -829,11 +658,10 @@ else:
 st.subheader("📋 Logs do Sistema")
 log_container = st.empty()
 
-# Executa o loop principal apenas se o bot estiver ativo
-if st.session_state.bot_rodando:
-    processar_rodada()
-    log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
-    time.sleep(CONFIG["INTERVALO_VERIFICACAO"])
-    st.rerun()
-else:
-    log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
+# Processa as rodadas continuadamente para ler histórico e atualizar tela
+processar_rodada()
+log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
+
+# Recarrega a página automaticamente a cada X segundos para acompanhar novas rodadas
+time.sleep(CONFIG["INTERVALO_VERIFICACAO"])
+st.rerun()
