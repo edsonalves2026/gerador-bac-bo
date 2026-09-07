@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import time
 import uuid
 from datetime import datetime
@@ -352,7 +353,7 @@ def obter_texto_placar() -> str:
     )
 
 # -----------------------------------------------------------------------------
-# 📊 RELATÓRIO MANUAL DE ASSERTIVIDADE (AJUSTADO PARA PERMITIR DIGITAÇÃO)
+# 📊 RELATÓRIO MANUAL DE ASSERTIVIDADE
 # -----------------------------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
@@ -362,7 +363,6 @@ qtd_rodadas_relatorio = st.sidebar.slider(
     min_value=10, max_value=200, value=200, step=10
 )
 
-# Campo que aceita digitação de números (1 a 12) ou nomes de cores (BANKER, PLAYER, TIE, ou números)
 entrada_alvo_digitada = st.sidebar.text_input(
     "🔎 Digite o Valor ou Entradas Alvo (ex: 8, 10, PLAYER, BANKER):",
     placeholder="Ex: 8 ou 8, 10 ou PLAYER"
@@ -371,8 +371,7 @@ entrada_alvo_digitada = st.sidebar.text_input(
 def processar_filtro_digitado(texto_input: str):
     """
     Interpreta o que o usuário digitou no campo de busca.
-    Extrai números (1 a 12) mesmo com palavras como 'Tier', 'Ponto' e separa as entradas.
-    Validado para PLAYER, BANKER e TIE.
+    Extrai números (1 a 12) mesmo acompanhados de palavras como 'Tier' ou 'Ponto'.
     """
     if not texto_input:
         return [], []
@@ -382,7 +381,7 @@ def processar_filtro_digitado(texto_input: str):
     filtro_entradas = []
     filtro_pontos = []
 
-    # Extrai cores/entradas (Banker, Player ou Tie/Empate)
+    # Extrai cores/entradas (Banker, Player ou Tie/Empate/Tier)
     if "RED" in texto_upper or "BANKER" in texto_upper or "🔴" in texto_upper or "VERMELHO" in texto_upper:
         filtro_entradas.append("🔴 BANKER")
     if "BLUE" in texto_upper or "PLAYER" in texto_upper or "🔵" in texto_upper or "AZUL" in texto_upper:
@@ -506,12 +505,6 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, texto_filtro: str
     total_gales = sum(p["acertos_gale"] for p in contagem_padroes.values())
     total_acertos = total_diretos + total_gales
     taxa_geral = (total_acertos / total_sinais * 100) if total_sinais > 0 else 0.0
-
-    filtros_aplicados = []
-    if filtro_entradas:
-        filtros_aplicados.append(f"Cores: `{', '.join(filtro_entradas)}`")
-    if filtro_pontos:
-        filtros_aplicados.append(f"Pontos: `{', '.join(filtro_pontos)}`")
 
     txt_filtros = f"\n🎯 *Filtros Digitados:* `{texto_filtro}`" if texto_filtro else ""
 
