@@ -131,17 +131,142 @@ filtro_pontos_manual = st.sidebar.multiselect(
 )
 
 
-# 4. Função interna atualizada para filtrar por valores de 1 a 12 e estatísticas do TIE
+# 4. Definição da Função (DEVE VIR ANTES DA CHAMADA DO BOTÃO)
 def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: list, filtro_pontos: list):
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
 
     if not cores or len(cores) < 10:
         return False, "⚠️ Histórico insuficiente retornado pela API."
 
-    # Recorta a amostra desejada
     amostra_cores = cores[-limite_rodadas:]
     amostra_compostos = compostos[-limite_rodadas:]
     amostra_pontos = pontos[-limite_rodadas:]
+
+    # Estatísticas do TIE
+    indices_tie = [i for i, c in enumerate(amostra_cores) if c == "🟡"]
+    total_ties = len(indices_tie)
+
+    if total_ties >= 2:
+        gaps_tie = [indices_tie[i] - indices_tie[i-1] for i in range(1, total_ties)]
+        media_rodadas_tie = sum(gaps_tie) / len(gaps_tie)
+        tempo_medio_min = (media_rodadas_tie * 30) / 60
+        txt_estatistica_tie = (
+            f"🟡 *Saídas do TIE:* `{total_ties}x` na amostra\n"
+            f"⏱️ *Intervalo Médio do TIE:* A cada `{media_rodadas_tie:.1f}` rodadas "
+            f"(~`{tempo_medio_min:.1f}` min)"
+        )
+    elif total_ties == 1:
+        txt_estatistica_tie = f"🟡 *Saídas do TIE:* Apenas `1x` na amostra selecionada."
+    else:
+        txt_estatistica_tie = f"🟡 *Saídas do TIE:* Nenhum Empate nas últimas `{len(amostra_cores)}` rodadas."
+
+    # Simulação retroativa de padrões
+    contagem_padroes = {}
+    tamanho_p = CONFIG["TAMANHO_PADRAO"]
+
+    for i in range(tamanho_p, len(amostra_cores) - 1):
+        sub_cores = amostra_cores[:i]
+        sub_compostos = amostra_compostos[:i]
+
+        sugestao, prob30, prob50, padrao_str = analisar_multi_amostra(sub_cores, sub_compostos)
+
+        if not sugestao or not padrao_str:
+            continue
+
+        if filtro_pontos:
+            tem_ponto_desejado = any(f" {ponto}" in padrao_str or f"({ponto})" in padrao_str for ponto in filtro_pontos)
+            if not tem_ponto_desejado:
+                continue
+
+        nome_sugestao = "🔴 BANKER" if sugestao == "🔴" else ("🔵 PLAYER" if sugestao == "🔵" else "🟡 TIE")
+
+        if filtro_entradas and nome_sugestao not in filtro_entradas:
+            continue
+
+        if padrao_str not in contagem_padroes:
+            contagem_padroes[padrao_str] = {
+                "total": 0,
+                "acertos_direto": 0,
+                "acertos_gale": 0,
+                "sugestao": nome_sugestao
+            }
+
+        contagem_padroes[padrao_str]["total"] += 1
+
+        res_1 = amostra_cores[i]
+        if res_1 == sugestao or res_1 == "🟡":
+            contagem_padroes[padrao_str]["acertos_direto"] += 1
+        elif i + 1 < len(amostra_cores):
+            res_2 = amostra_cores[i + 1]
+            if res_2 == sugestao or res_2 == "🟡":
+                contagem_padroes[padrao_str]["acertos_gale"] += 1
+
+    if not contagem_padroes:
+        return False, f"⚠️ Nenhum padrão atendeu aos critérios selecionados nas últimas {len(amostra_cores)} rodadas."
+
+    total_sinais = sum(p["total"] for p in contagem_padroes.values())
+    total_diretos = sum(p["acertos_direto"] for p in contagem_padroes.values())
+    total_gales = sum(p["acertos_gale"] for p in contagem_padroes.values())
+    total_acertos = total_diretos + total_gales
+    taxa_geral = (total_acertos / total_sinais * 100) if total_sinais > 0 else 0.0
+
+    # Mensagem Telegram
+    filtros_aplicados = []
+    if filtro_entradas:
+        filtros_aplicados.append(f"Cores: `{', '.join(filtro_entradas)}`")
+    if filtro_pontos:
+        filtros_aplicados.append(f"Pontos (1-12): `{', '.join(filtro_pontos)}`")
+
+    txt_filtros = f"\n🎯 *Filtros:* {' | '.join(filtros_aplicados)}" if filtros_aplicados else ""
+
+    msg = (
+        f"📊 *RELATÓRIO DE ASSERTIVIDADE HISTÓRICA*\n"
+        f"🆔 *Mesa:* `{CONFIG['MESA_ID'][:8]}...`\n"
+        f"🔄 *Amostra Analisada:* Últimas `{len(amostra_cores)}` rodadas{txt_filtros}\n"
+        f"-----------------------------------\n"
+        f"{txt_estatistica_tie}\n"
+        f"-----------------------------------\n"
+        f"🎯 *Total Sinais:* `{total_sinais}` | 🚀 *Assertividade:* `{taxa_geral:.1f}%`\n"
+        f"🎯 *Win Direto:* `{total_diretos}` | 🔄 *Win Gale 1:* `{total_gales}`\n"
+        f"-----------------------------------\n"
+        f"🏆 *TOP PADRÕES ENCONTRADOS:*\n"
+    )
+
+    padroes_ordenados = sorted(
+        contagem_padroes.items(),
+        key=lambda x: ((x[1]["acertos_direto"] + x[1]["acertos_gale"]) / x[1]["total"]) if x[1]["total"] > 0 else 0,
+        reverse=True
+    )
+
+    for padrao, info in padroes_ordenados[:5]:
+        total_p = info["total"]
+        acertos_p = info["acertos_direto"] + info["acertos_gale"]
+        taxa_p = (acertos_p / total_p * 100) if total_p > 0 else 0.0
+        msg += (
+            f"\n• `{padrao}`\n"
+            f"  ➔ Alvo: *{info['sugestao']}* | Taxa: `{taxa_p:.1f}%` ({acertos_p}/{total_p})\n"
+        )
+
+    msg += "\n⚠️ *Relatório estatístico gerado sob demanda.*"
+
+    if enviar_mensagem_telegram(msg):
+        return True, f"✅ Relatório enviado com sucesso ao Telegram!"
+    else:
+        return False, "❌ Falha ao enviar a mensagem ao Telegram."
+
+
+# 5. Botão acionador (Apenas executa ao clicar)
+if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
+    with st.spinner(f"Processando busca por valores (1-12) nas últimas {qtd_rodadas_relatorio} rodadas..."):
+        sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
+            qtd_rodadas_relatorio,
+            filtro_entrada_manual,
+            filtro_pontos_manual
+        )
+        if sucesso:
+            st.sidebar.success(msg_status)
+        else:
+            st.sidebar.warning(msg_status)
 
     # -------------------------------------------------------------------------
     # 🧮 CÁLCULO DE ESTATÍSTICAS E TEMPO MÉDIO DO TIE
