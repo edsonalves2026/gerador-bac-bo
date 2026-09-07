@@ -219,7 +219,7 @@ def buscar_historico_api():
         return [], [], [], [], []
 
 # -----------------------------------------------------------------------------
-# 🧠 BUSCA HÍBRIDA (DEFINIDA ANTES DE SER USADA NO RELATÓRIO)
+# 🧠 BUSCA HÍBRIDA DE PADRÕES
 # -----------------------------------------------------------------------------
 def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
@@ -290,7 +290,7 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
             if prob_r_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
                 return "🔴", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_cor_str
             if prob_b_tot >= CONFIG["SENSIBILIDADE_MINIMA"]:
-                return "🔵", round(prob_r_30, 1), round(prob_b_tot, 1), padrao_cor_str
+                return "🔵", round(prob_r_30, 1), round(prob_r_tot, 1), padrao_cor_str
 
     return None, 0.0, 0.0, None
 
@@ -392,14 +392,14 @@ def obter_texto_placar() -> str:
     )
 
 # -----------------------------------------------------------------------------
-# 📊 RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO
+# 📊 RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (LÓGICA HÍBRIDA / BUSCA DIRETA)
 # -----------------------------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
 
 qtd_rodadas_relatorio = st.sidebar.slider(
     "Amostra de Rodadas:",
-    min_value=10, max_value=200, value=100, step=10,
+    min_value=10, max_value=200, value=200, step=10,
     help="Define quantas rodadas do histórico recente serão usadas na análise."
 )
 
@@ -422,8 +422,10 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
         return False, "⚠️ Histórico insuficiente retornado pela API."
 
     amostra_cores = cores[-limite_rodadas:]
+    amostra_pontos = pontos[-limite_rodadas:]
     amostra_compostos = compostos[-limite_rodadas:]
 
+    # Estatística de TIE
     indices_tie = [i for i, c in enumerate(amostra_cores) if c == "🟡"]
     total_ties = len(indices_tie)
 
@@ -442,44 +444,90 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
         txt_estatistica_tie = f"🟡 *Saídas do TIE:* Nenhum Empate nas últimas `{len(amostra_cores)}` rodadas."
 
     contagem_padroes = {}
-    tamanho_p = CONFIG["TAMANHO_PADRAO"]
 
-    for i in range(tamanho_p, len(amostra_cores) - 1):
-        sub_cores = amostra_cores[:i]
-        sub_compostos = amostra_compostos[:i]
+    # =========================================================================
+    # MODO 1: BUSCA DIRETA QUANDO O USUÁRIO SELECIONA PONTUAÇÃO (EX: PLAYER 4)
+    # =========================================================================
+    if filtro_pontos:
+        pontos_alvo = [int(p) for p in filtro_pontos]
+        
+        # Mapeia quais cores verificar baseado no filtro ou assume todas
+        cores_alvo = []
+        if filtro_entradas:
+            if "🔴 BANKER" in filtro_entradas: cores_alvo.append("🔴")
+            if "🔵 PLAYER" in filtro_entradas: cores_alvo.append("🔵")
+            if "🟡 TIE" in filtro_entradas: cores_alvo.append("🟡")
+        else:
+            cores_alvo = ["🔴", "🔵", "🟡"]
 
-        sugestao, prob30, prob50, padrao_str = analisar_multi_amostra(sub_cores, sub_compostos)
+        for i in range(len(amostra_cores) - 1):
+            cor_atual = amostra_cores[i]
+            ponto_atual = amostra_pontos[i]
 
-        if not sugestao or not padrao_str:
-            continue
+            # Verifica se essa rodada foi a carta/pontuação desejada (ex: PLAYER 4)
+            if ponto_atual in pontos_alvo and cor_atual in cores_alvo:
+                chave_padrao = f"Mão Gatilho: {cor_atual} ({ponto_atual})"
+                
+                # A sugestão de aposta padrão após um gatilho é a cor da entrada selecionada ou repetição
+                sugestao_alvo = cores_alvo[0] if len(cores_alvo) == 1 else cor_atual
+                nome_sugestao = "🔴 BANKER" if sugestao_alvo == "🔴" else ("🔵 PLAYER" if sugestao_alvo == "🔵" else "🟡 TIE")
 
-        if filtro_pontos:
-            tem_ponto_desejado = any(f" {ponto}" in padrao_str or f"({ponto})" in padrao_str for ponto in filtro_pontos)
-            if not tem_ponto_desejado:
+                if chave_padrao not in contagem_padroes:
+                    contagem_padroes[chave_padrao] = {
+                        "total": 0,
+                        "acertos_direto": 0,
+                        "acertos_gale": 0,
+                        "sugestao": nome_sugestao
+                    }
+
+                contagem_padroes[chave_padrao]["total"] += 1
+
+                # Verifica o resultado na rodada seguinte (1ª Entrada)
+                res_1 = amostra_cores[i + 1]
+                if res_1 == sugestao_alvo or res_1 == "🟡":
+                    contagem_padroes[chave_padrao]["acertos_direto"] += 1
+                elif i + 2 < len(amostra_cores):
+                    # Verifica no Gale 1
+                    res_2 = amostra_cores[i + 2]
+                    if res_2 == sugestao_alvo or res_2 == "🟡":
+                        contagem_padroes[chave_padrao]["acertos_gale"] += 1
+
+    # =========================================================================
+    # MODO 2: BUSCA POR PADRÕES DINÂMICOS (SE NÃO FILTRAR POR PONTUAÇÃO)
+    # =========================================================================
+    else:
+        tamanho_p = CONFIG["TAMANHO_PADRAO"]
+        for i in range(tamanho_p, len(amostra_cores) - 1):
+            sub_cores = amostra_cores[:i]
+            sub_compostos = amostra_compostos[:i]
+
+            sugestao, prob30, prob50, padrao_str = analisar_multi_amostra(sub_cores, sub_compostos)
+
+            if not sugestao or not padrao_str:
                 continue
 
-        nome_sugestao = "🔴 BANKER" if sugestao == "🔴" else ("🔵 PLAYER" if sugestao == "🔵" else "🟡 TIE")
+            nome_sugestao = "🔴 BANKER" if sugestao == "🔴" else ("🔵 PLAYER" if sugestao == "🔵" else "🟡 TIE")
 
-        if filtro_entradas and nome_sugestao not in filtro_entradas:
-            continue
+            if filtro_entradas and nome_sugestao not in filtro_entradas:
+                continue
 
-        if padrao_str not in contagem_padroes:
-            contagem_padroes[padrao_str] = {
-                "total": 0,
-                "acertos_direto": 0,
-                "acertos_gale": 0,
-                "sugestao": nome_sugestao
-            }
+            if padrao_str not in contagem_padroes:
+                contagem_padroes[padrao_str] = {
+                    "total": 0,
+                    "acertos_direto": 0,
+                    "acertos_gale": 0,
+                    "sugestao": nome_sugestao
+                }
 
-        contagem_padroes[padrao_str]["total"] += 1
+            contagem_padroes[padrao_str]["total"] += 1
 
-        res_1 = amostra_cores[i]
-        if res_1 == sugestao or res_1 == "🟡":
-            contagem_padroes[padrao_str]["acertos_direto"] += 1
-        elif i + 1 < len(amostra_cores):
-            res_2 = amostra_cores[i + 1]
-            if res_2 == sugestao or res_2 == "🟡":
-                contagem_padroes[padrao_str]["acertos_gale"] += 1
+            res_1 = amostra_cores[i]
+            if res_1 == sugestao or res_1 == "🟡":
+                contagem_padroes[padrao_str]["acertos_direto"] += 1
+            elif i + 1 < len(amostra_cores):
+                res_2 = amostra_cores[i + 1]
+                if res_2 == sugestao or res_2 == "🟡":
+                    contagem_padroes[padrao_str]["acertos_gale"] += 1
 
     if not contagem_padroes:
         return False, f"⚠️ Nenhum padrão atendeu aos critérios selecionados nas últimas {len(amostra_cores)} rodadas."
@@ -494,7 +542,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     if filtro_entradas:
         filtros_aplicados.append(f"Cores: `{', '.join(filtro_entradas)}`")
     if filtro_pontos:
-        filtros_aplicados.append(f"Pontos (1-12): `{', '.join(filtro_pontos)}`")
+        filtros_aplicados.append(f"Pontos: `{', '.join(filtro_pontos)}`")
 
     txt_filtros = f"\n🎯 *Filtros:* {' | '.join(filtros_aplicados)}" if filtros_aplicados else ""
 
@@ -505,10 +553,10 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
         f"-----------------------------------\n"
         f"{txt_estatistica_tie}\n"
         f"-----------------------------------\n"
-        f"🎯 *Total Sinais:* `{total_sinais}` | 🚀 *Assertividade:* `{taxa_geral:.1f}%`\n"
+        f"🎯 *Total Ocorrências:* `{total_sinais}` | 🚀 *Assertividade:* `{taxa_geral:.1f}%`\n"
         f"🎯 *Win Direto:* `{total_diretos}` | 🔄 *Win Gale 1:* `{total_gales}`\n"
         f"-----------------------------------\n"
-        f"🏆 *TOP PADRÕES ENCONTRADOS:*\n"
+        f"🏆 *OCORRÊNCIAS ENCONTRADAS:*\n"
     )
 
     padroes_ordenados = sorted(
@@ -534,7 +582,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
         return False, "❌ Falha ao enviar a mensagem ao Telegram."
 
 if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
-    with st.spinner(f"Processando busca por valores (1-12) nas últimas {qtd_rodadas_relatorio} rodadas..."):
+    with st.spinner(f"Processando busca por valores ({', '.join(filtro_pontos_manual) if filtro_pontos_manual else 'Geral'}) nas últimas {qtd_rodadas_relatorio} rodadas..."):
         sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
             qtd_rodadas_relatorio,
             filtro_entrada_manual,
