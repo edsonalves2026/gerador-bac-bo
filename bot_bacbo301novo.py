@@ -352,7 +352,7 @@ def obter_texto_placar() -> str:
     )
 
 # -----------------------------------------------------------------------------
-# 📊 RELATÓRIO MANUAL DE ASSERTIVIDADE
+# 📊 RELATÓRIO MANUAL DE ASSERTIVIDADE (AJUSTADO PARA PERMITIR DIGITAÇÃO)
 # -----------------------------------------------------------------------------
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
@@ -362,19 +362,44 @@ qtd_rodadas_relatorio = st.sidebar.slider(
     min_value=10, max_value=200, value=200, step=10
 )
 
-filtro_entrada_manual = st.sidebar.multiselect(
-    "Filtrar por Entradas Alvo (Sugestão):",
-    options=["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"],
-    default=[]
+# Campo que aceita digitação de números (1 a 12) ou nomes de cores (BANKER, PLAYER, TIE, ou números)
+entrada_alvo_digitada = st.sidebar.text_input(
+    "🔎 Digite o Valor ou Entradas Alvo (ex: 8, 10, PLAYER, BANKER):",
+    placeholder="Ex: 8 ou 8, 10 ou PLAYER"
 )
 
-filtro_pontos_manual = st.sidebar.multiselect(
-    "Filtrar por Valor Específico da Mão (1 a 12):",
-    options=[str(i) for i in range(1, 13)],
-    default=[]
-)
+def processar_filtro_digitado(texto_input: str):
+    """
+    Interpreta o que o usuário digitou no campo de busca.
+    Separa valores numéricos (1 a 12) e entradas/cores.
+    """
+    if not texto_input:
+        return [], []
 
-def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: list, filtro_pontos: list):
+    partes = [p.strip().upper() for p in texto_input.replace(";", ",").split(",") if p.strip()]
+    
+    filtro_entradas = []
+    filtro_pontos = []
+
+    for parte in partes:
+        if parte in ["8", "1", "2", "3", "4", "5", "6", "7", "9", "10", "11", "12"]:
+            filtro_pontos.append(parte)
+        elif "RED" in parte or "BANKER" in parte or "🔴" in parte or "VERMELHO" in parte:
+            filtro_entradas.append("🔴 BANKER")
+        elif "BLUE" in parte or "PLAYER" in parte or "🔵" in parte or "AZUL" in parte:
+            filtro_entradas.append("🔵 PLAYER")
+        elif "YELLOW" in parte or "TIE" in parte or "🟡" in parte or "EMPATE" in parte:
+            filtro_entradas.append("🟡 TIE")
+        elif parte.isdigit():
+            val = int(parte)
+            if 1 <= val <= 12:
+                filtro_pontos.append(str(val))
+
+    return list(set(filtro_entradas)), list(set(filtro_pontos))
+
+def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, texto_filtro: str):
+    filtro_entradas, filtro_pontos = processar_filtro_digitado(texto_filtro)
+
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
 
     if not cores or len(cores) < 10:
@@ -474,7 +499,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
                     contagem_padroes[padrao_str]["acertos_gale"] += 1
 
     if not contagem_padroes:
-        return False, f"⚠️ Nenhum padrão atendeu aos critérios selecionados nas últimas {len(amostra_cores)} rodadas."
+        return False, f"⚠️ Nenhum padrão atendeu aos critérios digitados ('{texto_filtro}') nas últimas {len(amostra_cores)} rodadas."
 
     total_sinais = sum(p["total"] for p in contagem_padroes.values())
     total_diretos = sum(p["acertos_direto"] for p in contagem_padroes.values())
@@ -488,7 +513,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     if filtro_pontos:
         filtros_aplicados.append(f"Pontos: `{', '.join(filtro_pontos)}`")
 
-    txt_filtros = f"\n🎯 *Filtros:* {' | '.join(filtros_aplicados)}" if filtros_aplicados else ""
+    txt_filtros = f"\n🎯 *Filtros Digitados:* `{texto_filtro}`" if texto_filtro else ""
 
     msg = (
         f"📊 *RELATÓRIO DE ASSERTIVIDADE HISTÓRICA*\n"
@@ -529,8 +554,7 @@ if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
     with st.spinner("Processando histórico..."):
         sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
             qtd_rodadas_relatorio,
-            filtro_entrada_manual,
-            filtro_pontos_manual
+            entrada_alvo_digitada
         )
         if sucesso:
             st.sidebar.success(msg_status)
