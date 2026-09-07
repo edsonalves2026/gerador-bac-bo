@@ -99,7 +99,7 @@ MESA_ID = st.sidebar.text_input(
     value="cc71e81d-8b56-4868-91c7-7224be543dce"
 )
 # =============================================================================
-# 📊 PAINEL LATERAL: RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (BAC-BO PRO)
+# 📊 PAINEL LATERAL: RELATÓRIO DE ASSERTIVIDADE CUSTOMIZADO (PONTUAÇÃO 1-12)
 # =============================================================================
 st.sidebar.divider()
 st.sidebar.subheader("📊 Relatório Manual de Assertividade")
@@ -114,25 +114,25 @@ qtd_rodadas_relatorio = st.sidebar.slider(
     help="Define quantas rodadas do histórico recente serão usadas na análise."
 )
 
-# 2. Seletor por Cores
+# 2. Seletor por Entradas Alvo (Sugestão de Aposta)
 filtro_entrada_manual = st.sidebar.multiselect(
-    "Filtrar por Entradas Alvo (Cores):",
+    "Filtrar por Entradas Alvo (Sugestão):",
     options=["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"],
     default=[],
-    help="Filtra padrões que sugerem estas cores específicas."
+    help="Filtra padrões que sugerem estas cores especificamente."
 )
 
-# 3. Seletor por Soma Específica dos Dados (Ex: 2 a 24)
-filtro_soma_manual = st.sidebar.multiselect(
-    "Filtrar por Soma de Dados Específica (Opcional):",
-    options=[str(i) for i in range(2, 25)],
+# 3. Seletor de Valor Específico do Dado/Mão (1 a 12)
+filtro_pontos_manual = st.sidebar.multiselect(
+    "Filtrar por Valor Específico da Mão (1 a 12):",
+    options=[str(i) for i in range(1, 13)],
     default=[],
-    help="Exemplo: Selecione '10' ou '12' para analisar apenas padrões contendo essas somas."
+    help="Exemplo: Selecione '10' ou '12' para buscar padrões que contenham esse valor específico do resultado."
 )
 
 
-# 4. Função interna atualizada com Métricas de TIE e Busca Mista
-def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas: list, filtro_somas: list):
+# 4. Função interna atualizada para filtrar por valores de 1 a 12 e estatísticas do TIE
+def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: list, filtro_pontos: list):
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
 
     if not cores or len(cores) < 10:
@@ -152,8 +152,7 @@ def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas
     if total_ties >= 2:
         gaps_tie = [indices_tie[i] - indices_tie[i-1] for i in range(1, total_ties)]
         media_rodadas_tie = sum(gaps_tie) / len(gaps_tie)
-        # Estimativa considerando média de ~30 segundos por rodada no Bac-Bo
-        tempo_medio_min = (media_rodadas_tie * 30) / 60
+        tempo_medio_min = (media_rodadas_tie * 30) / 60  # Média de ~30s por rodada
         txt_estatistica_tie = (
             f"🟡 *Saídas do TIE:* `{total_ties}x` na amostra\n"
             f"⏱️ *Intervalo Médio do TIE:* A cada `{media_rodadas_tie:.1f}` rodadas "
@@ -165,7 +164,7 @@ def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas
         txt_estatistica_tie = f"🟡 *Saídas do TIE:* Nenhum Empate nas últimas `{len(amostra_cores)}` rodadas."
 
     # -------------------------------------------------------------------------
-    # 🔍 SIMULAÇÃO RETROATIVA DE PADRÕES (CORES + SOMAS)
+    # 🔍 SIMULAÇÃO RETROATIVA DE PADRÕES (CORES + VALORES 1-12)
     # -------------------------------------------------------------------------
     contagem_padroes = {}
     tamanho_p = CONFIG["TAMANHO_PADRAO"]
@@ -179,10 +178,11 @@ def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas
         if not sugestao or not padrao_str:
             continue
 
-        # Filtro de Somas Exatas (se o usuário selecionou alguma soma na Sidebar)
-        if filtro_somas:
-            tem_soma_desejada = any(soma in padrao_str for soma in filtro_somas)
-            if not tem_soma_desejada:
+        # Filtro por Valor Específico do Resultado (1 a 12)
+        if filtro_pontos:
+            # Verifica se o valor numérico escolhido aparece na string do padrão (ex: "🔴 10", "🔵 12", "🟡 8")
+            tem_ponto_desejado = any(f" {ponto}" in padrao_str or f"({ponto})" in padrao_str for ponto in filtro_pontos)
+            if not tem_ponto_desejado:
                 continue
 
         nome_sugestao = "🔴 BANKER" if sugestao == "🔴" else ("🔵 PLAYER" if sugestao == "🔵" else "🟡 TIE")
@@ -211,7 +211,7 @@ def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas
                 contagem_padroes[padrao_str]["acertos_gale"] += 1
 
     if not contagem_padroes:
-        return False, f"⚠️ Nenhum padrão atendeu aos critérios de busca nas últimas {len(amostra_cores)} rodadas."
+        return False, f"⚠️ Nenhum padrão atendeu aos critérios com o valor (1-12) selecionado nas últimas {len(amostra_cores)} rodadas."
 
     total_sinais = sum(p["total"] for p in contagem_padroes.values())
     total_diretos = sum(p["acertos_direto"] for p in contagem_padroes.values())
@@ -225,15 +225,15 @@ def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas
     filtros_aplicados = []
     if filtro_entradas:
         filtros_aplicados.append(f"Cores: `{', '.join(filtro_entradas)}`")
-    if filtro_somas:
-        filtros_aplicados.append(f"Somas: `{', '.join(filtro_somas)}`")
+    if filtro_pontos:
+        filtros_aplicados.append(f"Pontos (1-12): `{', '.join(filtro_pontos)}`")
 
     txt_filtros = f"\n🎯 *Filtros:* {' | '.join(filtros_aplicados)}" if filtros_aplicados else ""
 
     msg = (
         f"📊 *RELATÓRIO DE ASSERTIVIDADE HISTÓRICA*\n"
         f"🆔 *Mesa:* `{CONFIG['MESA_ID'][:8]}...`\n"
-        f"🔄 *Amostra Analisada:* Last `{len(amostra_cores)}` rodadas{txt_filtros}\n"
+        f"🔄 *Amostra Analisada:* Últimas `{len(amostra_cores)}` rodadas{txt_filtros}\n"
         f"-----------------------------------\n"
         f"{txt_estatistica_tie}\n"
         f"-----------------------------------\n"
@@ -268,11 +268,11 @@ def gerar_e_enviar_relatorio_bacbo_avancado(limite_rodadas: int, filtro_entradas
 
 # 5. Botão de disparo
 if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
-    with st.spinner(f"Processando busca de padrões nas últimas {qtd_rodadas_relatorio} rodadas..."):
-        sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_avancado(
+    with st.spinner(f"Processando busca por valores (1-12) nas últimas {qtd_rodadas_relatorio} rodadas..."):
+        sucesso, msg_status = gerar_e_enviar_relatorio_bacbo_pontos(
             qtd_rodadas_relatorio,
             filtro_entrada_manual,
-            filtro_soma_manual
+            filtro_pontos_manual
         )
         if sucesso:
             st.sidebar.success(msg_status)
