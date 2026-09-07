@@ -75,7 +75,7 @@ st.sidebar.title("🎛️ Painel de Controle")
 
 INTERVALO_VERIFICACAO = st.sidebar.slider(
     "⏱️ Intervalo de Verificação (s)",
-    min_value=2, max_value=30, value=5, step=1
+    min_value=2, max_value=30, value=8, step=1
 )
 
 SENSIBILIDADE_MINIMA = st.sidebar.slider(
@@ -90,7 +90,7 @@ TAMANHO_PADRAO = st.sidebar.slider(
 
 MIN_OPERACOES_RANKING = st.sidebar.number_input(
     "🏆 Mínimo de Amostras p/ Ranking",
-    min_value=1, max_value=10, value=3
+    min_value=1, max_value=10, value=4
 )
 
 st.sidebar.divider()
@@ -123,7 +123,6 @@ def inicializar_estados():
         "tentativa": 0,
         "ultimo_uuid_processado": None,
         "ultimo_uuid_sinal_enviado": None,
-        "ultimo_uuid_tie_enviado": None,
         "historico_sinais": [],
         "historico_ciclo": [],
         "log_eventos": [],
@@ -193,11 +192,11 @@ def buscar_historico_api():
             ponto = item.get("result", 0)
 
             if "BANKER" in tipo or "RED" in tipo:
-                cor, nome = "🔴", "BANKER"
+                cor = "🔴"
             elif "PLAYER" in tipo or "BLUE" in tipo:
-                cor, nome = "🔵", "PLAYER"
+                cor = "🔵"
             elif "TIE" in tipo or "YELLOW" in tipo:
-                cor, nome = "🟡", "TIE"
+                cor = "🟡"
             else:
                 continue
 
@@ -288,7 +287,7 @@ def analisar_multi_amostra(historico_cores: list, historico_compostos: list):
     return None, 0.0, 0.0, None
 
 # -----------------------------------------------------------------------------
-# 📝 PLACAR
+# 📝 PLACAR E RESULTADOS
 # -----------------------------------------------------------------------------
 def registrar_resultado(resultado: str, padrao_usado: str = None):
     st.session_state.historico_sinais.append(resultado)
@@ -522,7 +521,7 @@ def gerar_e_enviar_relatorio_bacbo_pontos(limite_rodadas: int, filtro_entradas: 
     msg += "\n⚠️ *Relatório estatístico gerado sob demanda.*"
 
     if enviar_mensagem_telegram(msg):
-        return True, f"✅ Relatório enviado com sucesso ao Telegram!"
+        return True, "✅ Relatório enviado com sucesso ao Telegram!"
     else:
         return False, "❌ Falha ao enviar a mensagem ao Telegram."
 
@@ -539,7 +538,51 @@ if st.sidebar.button("📤 Gerar e Enviar Relatório Manual"):
             st.sidebar.warning(msg_status)
 
 # -----------------------------------------------------------------------------
-# 🔄 LEITURA CONTÍNUA E PROCESSAMENTO DE RODADAS
+# 📌 GERENCIADOR DE PADRÕES FIXOS NA SIDEBAR
+# -----------------------------------------------------------------------------
+st.sidebar.divider()
+st.sidebar.subheader("📌 Cadastrar Padrão Fixo Manual")
+
+with st.sidebar.form("form_novo_padrao", clear_on_submit=True):
+    nome_padrao = st.text_input("Nome do Padrão", placeholder="Ex: Duplo 10 e 8")
+    sequencia_input = st.text_input(
+        "Sequência (separada por vírgula)", 
+        placeholder="Ex: 🔴 10, 🔵 8 ou 🔴, 🔴"
+    )
+    sugestao_entrada = st.selectbox("Entrada Recomendada", ["🔴 BANKER", "🔵 PLAYER", "🟡 TIE"])
+    btn_salvar = st.form_submit_button("➕ Salvar Padrão Fixo")
+
+    if btn_salvar and sequencia_input and nome_padrao:
+        lista_seq = [item.strip() for item in sequencia_input.split(",")]
+        
+        if "BANKER" in sugestao_entrada:
+            cor_sugestao, nome_sugestao = "🔴", "BANKER"
+        elif "PLAYER" in sugestao_entrada:
+            cor_sugestao, nome_sugestao = "🔵", "PLAYER"
+        else:
+            cor_sugestao, nome_sugestao = "🟡", "TIE"
+
+        st.session_state.PADROES_MANUAIS_COMPOSTOS[nome_padrao] = {
+            "padrao": lista_seq,
+            "sugestao": cor_sugestao,
+            "nome_sugestao": nome_sugestao,
+            "ativo": True
+        }
+        salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
+        st.sidebar.success(f"Padrão '{nome_padrao}' salvo!")
+
+if st.session_state.PADROES_MANUAIS_COMPOSTOS:
+    st.sidebar.markdown("**Padrões Salvos:**")
+    for chave, item in list(st.session_state.PADROES_MANUAIS_COMPOSTOS.items()):
+        seq_txt = " | ".join(item["padrao"])
+        st.sidebar.text(f"• {chave}: [{seq_txt}] ➔ {item['sugestao']}")
+        if st.sidebar.button(f"🗑️ Remover {chave}", key=f"del_{chave}"):
+            del st.session_state.PADROES_MANUAIS_COMPOSTOS[chave]
+            salvar_padroes_locais(st.session_state.PADROES_MANUAIS_COMPOSTOS)
+            st.rerun()
+
+# -----------------------------------------------------------------------------
+# 🔄 LÓGICA DE PROCESSAMENTO DE RODADAS
 # -----------------------------------------------------------------------------
 def processar_rodada():
     cores, uuids, pontos, compostos, exibicao = buscar_historico_api()
@@ -548,12 +591,10 @@ def processar_rodada():
 
     uuid_atual = uuids[-1]
     
-    # Registra a rodada nos logs SEMPRE (mesmo se pausado)
     if uuid_atual != st.session_state.ultimo_uuid_processado:
         st.session_state.ultimo_uuid_processado = uuid_atual
         registrar_log(f"Nova rodada: {exibicao[-1]}", CoresTerminal.AZUL)
 
-    # Lógica de sinais ativa APENAS quando bot está LIGADO
     if st.session_state.bot_rodando:
         ultimo_resultado = cores[-1]
         ultimo_ponto = pontos[-1]
@@ -655,13 +696,13 @@ if ranking:
 else:
     st.info(f"⏳ Aguardando padrões atingirem o mínimo de {CONFIG['MIN_OPERACOES_RANKING']} entradas para exibição.")
 
-st.subheader("📋 Logs do Sistema")
-log_container = st.empty()
+# -----------------------------------------------------------------------------
+# ⚡ FRAGMENTO ISOLADO (ATUALIZAÇÃO EM SEGUNDO PLANO SEM TRAVAR A TELA)
+# -----------------------------------------------------------------------------
+@st.fragment(run_every=CONFIG["INTERVALO_VERIFICACAO"])
+def renderizar_logs_e_processar():
+    processar_rodada()
+    st.subheader("📋 Logs do Sistema")
+    st.code("\n".join(st.session_state.log_eventos[:15]), language=None)
 
-# Processa as rodadas continuadamente para ler histórico e atualizar tela
-processar_rodada()
-log_container.code("\n".join(st.session_state.log_eventos[:15]), language=None)
-
-# Recarrega a página automaticamente a cada X segundos para acompanhar novas rodadas
-time.sleep(CONFIG["INTERVALO_VERIFICACAO"])
-st.rerun()
+renderizar_logs_e_processar()
