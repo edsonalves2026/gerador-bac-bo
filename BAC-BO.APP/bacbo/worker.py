@@ -191,25 +191,25 @@ class BacBoWorker:
                 return
                 
          # --- INÍCIO DA ALTERAÇÃO --- 
-        if self.config.usar_gestao_risco:
-            motivo = self.stop_rules.avaliar(
-                self.state["historico_sinais"], self.banca, self.entradas_ultima_hora(),
-             )
-            if motivo:
-                if motivo != self.motivo_bloqueio:
-                    self._log(motivo, CoresTerminal.VERMELHO)
-                    self.notifier.send(f"🛑 *BLOQUEIO ATIVO*\n{motivo}")
-                    self.motivo_bloqueio = motivo
-                return
-            if self.motivo_bloqueio:
-                self.notifier.send("✅ *BOT LIBERADO* — condições normalizadas")
-                self.motivo_bloqueio = None
+            if self.config.usar_gestao_risco:
+                motivo = self.stop_rules.avaliar(
+                    self.state["historico_sinais"], self.banca, self.entradas_ultima_hora(),
+                )
+                if motivo:
+                    if motivo != self.motivo_bloqueio:
+                        self._log(motivo, CoresTerminal.VERMELHO)
+                        self.notifier.send(f"🛑 *BLOQUEIO ATIVO*\n{motivo}")
+                        self.motivo_bloqueio = motivo
+                    return
+                if self.motivo_bloqueio:
+                    self.notifier.send("✅ *BOT LIBERADO* — condições normalizadas")
+                    self.motivo_bloqueio = None
 
-            cooldown = self.stop_rules.precisa_cooldown(self.state["historico_sinais"])
-            if cooldown > 0:
-                self._log(f"⏳ Cooldown: {cooldown} rodada(s)", CoresTerminal.AMARELO)
-                return
-        else:
+                cooldown = self.stop_rules.precisa_cooldown(self.state["historico_sinais"])
+                if cooldown > 0:
+                    self._log(f"⏳ Cooldown: {cooldown} rodada(s)", CoresTerminal.AMARELO)
+                    return
+            else:
                 if self.motivo_bloqueio and "⏱️" not in self.motivo_bloqueio:
                     self.motivo_bloqueio = None
             # --- FIM DA ALTERAÇÃO ---
