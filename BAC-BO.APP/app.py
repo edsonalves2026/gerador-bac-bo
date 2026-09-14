@@ -92,9 +92,9 @@ st.sidebar.divider()
 st.sidebar.subheader("🛡️ Gestão de Risco")
 sl_consec = st.sidebar.number_input("Stop-Loss (LOSS seguidos)", 1, 10,
                                      worker.config.stop_loss_consecutivo)
-dd_max = st.sidebar.number_input("Stop Drawdown (u)", 1.0, 50.0,
+dd_max = st.sidebar.number_input("Stop Drawdown (u)", 1.0, 5000.0,
                                   worker.config.stop_drawdown_unidades, 0.5)
-sw_max = st.sidebar.number_input("Stop-Win (u)", 1.0, 100.0,
+sw_max = st.sidebar.number_input("Stop-Win (u)", 1.0, 10000.0,
                                   worker.config.stop_win_sessao, 0.5)
 worker.update_config(
     stop_loss_consecutivo=int(sl_consec),
