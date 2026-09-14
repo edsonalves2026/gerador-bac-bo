@@ -90,6 +90,7 @@ worker.update_config(
 # ---------- Gestão de risco ----------
 st.sidebar.divider()
 st.sidebar.subheader("🛡️ Gestão de Risco")
+usar_gestao = st.sidebar.checkbox("Ativar Trava de Risco & Cooldown", value=worker.config.usar_gestao_risco)
 sl_consec = st.sidebar.number_input("Stop-Loss (LOSS seguidos)", 1, 10,
                                      worker.config.stop_loss_consecutivo)
 dd_max = st.sidebar.number_input("Stop Drawdown (u)", 1.0, 5000.0,
@@ -97,6 +98,7 @@ dd_max = st.sidebar.number_input("Stop Drawdown (u)", 1.0, 5000.0,
 sw_max = st.sidebar.number_input("Stop-Win (u)", 1.0, 10000.0,
                                   worker.config.stop_win_sessao, 0.5)
 worker.update_config(
+    usar_gestao_risco=usar_gestao,
     stop_loss_consecutivo=int(sl_consec),
     stop_drawdown_unidades=float(dd_max),
     stop_win_sessao=float(sw_max),
