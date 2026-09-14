@@ -168,7 +168,7 @@ class BacBoWorker:
         if not uuids:
             return
 
-        novos = self._persistir_rodadas(self.config.mesa_id, uuids, cores, pontos)
+        novos = self._persistir_rodadas(self.config.mesa_id, pontos, cores, pontos)
         if novos:
             self._log(f"💾 {novos} rodada(s) persistida(s)", CoresTerminal.CIANO)
 
