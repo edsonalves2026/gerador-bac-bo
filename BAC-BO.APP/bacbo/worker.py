@@ -189,9 +189,12 @@ class BacBoWorker:
             if not self._dentro_janela():
                 self.motivo_bloqueio = "⏱️ Fora da janela de operação"
                 return
+                
+         # --- INÍCIO DA ALTERAÇÃO --- 
+        if self.config.usar_gestao_risco:
             motivo = self.stop_rules.avaliar(
                 self.state["historico_sinais"], self.banca, self.entradas_ultima_hora(),
-            )
+             )
             if motivo:
                 if motivo != self.motivo_bloqueio:
                     self._log(motivo, CoresTerminal.VERMELHO)
@@ -206,6 +209,10 @@ class BacBoWorker:
             if cooldown > 0:
                 self._log(f"⏳ Cooldown: {cooldown} rodada(s)", CoresTerminal.AMARELO)
                 return
+        else:
+                if self.motivo_bloqueio and "⏱️" not in self.motivo_bloqueio:
+                    self.motivo_bloqueio = None
+            # --- FIM DA ALTERAÇÃO ---
 
             self._buscar_e_enviar_sinal(cores, pontos, compostos, uuid_atual)
 
