@@ -62,7 +62,8 @@ class BacBoConfig:
     stop_win_sessao: float = 10.0
     cooldown_apos_loss: int = 2
     max_entradas_hora: int = 20
-
+    usar_gestao_risco: bool = True
+    
     # Janela operacional
     hora_inicio: int = 10
     hora_fim: int = 23
