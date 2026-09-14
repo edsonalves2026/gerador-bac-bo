@@ -16,7 +16,7 @@ from .strategies import (
 
 class BacBoWorker:
     MAX_LOGS = 100
-    MAX_HISTORICO = 50
+    MAX_HISTORICO = 200 
     MAX_CICLO = 500
 
     def __init__(self, client, notifier, db, config: Optional[BacBoConfig] = None) -> None:
