@@ -49,6 +49,30 @@ class Database:
             """)
             self._conn.commit()
 
+    # ---------- detecção automática de padrões ----------
+    def salvar_padrao_auto(
+        self,
+        nome: str,
+        sequencia: List[str],
+        sugestao: str,
+        ocorrencias: int,
+        taxa: float,
+        fonte: str = "auto",
+    ) -> None:
+        """Salva um padrão descoberto automaticamente pelo analisador."""
+        meta = {
+            "ocorrencias": ocorrencias,
+            "taxa": taxa,
+            "fonte": fonte,
+        }
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO padroes (nome, padrao_json, sugestao, ativo) "
+                "VALUES (?, ?, ?, 1)",
+                (nome, json.dumps(sequencia, ensure_ascii=False), sugestao),
+            )
+            self._conn.commit()
+    
     # ---------- padrões ----------
     def carregar_padroes(self) -> Dict[str, Dict[str, Any]]:
         with self._lock:
