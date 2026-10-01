@@ -81,6 +81,12 @@ from .analysis_service import AnalysisService
             self.thread.start()
         self._log("▶️ Motor iniciado.", CoresTerminal.VERDE)
 
+        # Em start():
+        self.feed.push_info("Motor iniciado")
+
+        # Em stop():
+        self.feed.push_info("Motor pausado")
+        
     def stop(self) -> None:
         with self.lock:
             self.state["bot_rodando"] = False
@@ -94,6 +100,9 @@ from .analysis_service import AnalysisService
                     setattr(self.config, k, v)
 
     def get_state(self) -> Dict[str, Any]:
+
+    "feed_eventos": [e.to_dict() for e in self.feed.eventos(limite=50)],
+        
         with self.lock:
             return {
                 **self.state,
@@ -335,6 +344,13 @@ from .analysis_service import AnalysisService
             }
         self.timestamps_entradas.append(datetime.now())
 
+        # Publica no feed ao vivo
+        self.feed.push_entrada(
+            sugestao=sugestao,
+            gale_max=self.config.max_gale,
+            fonte=fonte,
+        )
+        
         msg = (
             "🤖 *BAC BO PRO - SINAL VIP*\n\n"
             f"🎯 *ENTRADA:* {nome}\n"
@@ -374,6 +390,7 @@ from .analysis_service import AnalysisService
             else:
                 tipo, header = "WIN_G1", "✅ *WIN NO GALE 1!* 🎯"
             self._registrar_resultado(tipo, padrao_usado)
+            self.feed.push_resultado(tipo_win)
             self.notifier.send(f"{header}\nResultado: `{txt}`\n\n{self._obter_texto_placar()}")
             with self.lock:
                 self.state["sinal_ativo"] = False
@@ -386,12 +403,16 @@ from .analysis_service import AnalysisService
 
         else:
             self._registrar_resultado("LOSS", padrao_usado)
+            self.feed.push_resultado("LOSS")
             self.notifier.send(
                 f"❌ *LOSS CONFIRMADO*\nResultado: `{txt}`\n\n{self._obter_texto_placar()}"
             )
             with self.lock:
                 self.state["sinal_ativo"] = False
                 self.state["padrao_selecionado"] = None
+                self.feed.push_bloqueio(motivo)
+                self.notifier.send("✅ *BOT LIBERADO* — condições normalizadas")
+                self.feed.push_info("Bot liberado — condições normalizadas")
 
     # ------------------------------------------------------------- ranking
     def _registrar_resultado(self, resultado: str, padrao: Optional[str]) -> None:
