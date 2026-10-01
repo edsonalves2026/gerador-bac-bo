@@ -14,6 +14,27 @@ class Database:
         self._conn.row_factory = sqlite3.Row
         self._init_schema()
 
+    def salvar_evento_feed(self, evento: dict) -> None:
+        """Persiste um evento do feed (opcional, para auditoria)."""
+        with self._lock:
+            self._conn.execute("""
+                CREATE TABLE IF NOT EXISTS feed_eventos (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    tipo TEXT, titulo TEXT, corpo TEXT, subtitulo TEXT,
+                    cor TEXT, icone TEXT, ts TEXT, ts_full TEXT
+                )
+            """)
+            self._conn.execute(
+                "INSERT INTO feed_eventos "
+                "(tipo, titulo, corpo, subtitulo, cor, icone, ts, ts_full) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (evento.get("tipo", ""), evento.get("titulo", ""),
+                 evento.get("corpo", ""), evento.get("subtitulo", ""),
+                 evento.get("cor", ""), evento.get("icone", ""),
+                 evento.get("ts", ""), evento.get("ts_full", "")),
+            )
+            self._conn.commit()
+    
     def _init_schema(self) -> None:
         with self._lock:
             self._conn.executescript("""
