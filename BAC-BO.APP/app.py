@@ -135,107 +135,138 @@ with st.sidebar.form("form_padrao", clear_on_submit=True):
         st.rerun()
 
 # =============================================================================
-# 🔍 ANÁLISE AUTOMÁTICA DE PADRÕES (CORES + NÚMEROS)
+# 📊 ANÁLISE SOBRE AS ÚLTIMAS N RODADAS
 # =============================================================================
-from bacbo.patterns_analyzer import PatternsAnalyzer
-
 st.sidebar.divider()
-st.sidebar.subheader("📊 Análise Automática de Padrões")
+st.sidebar.subheader("📊 Análise Estatística")
 
-# --- Parâmetros de análise ---
-col_a, col_b = st.sidebar.columns(2)
-tam_cor = col_a.number_input("Tam. cores", 2, 6, 4)
-min_oc = col_b.number_input("Mín. ocor.", 2, 20, 4)
+# --- Filtros (espelham a imagem de referência) ---
+col_a, col_b, col_c = st.sidebar.columns(3)
+num_rodadas = col_a.number_input(
+    "Nº rodadas", min_value=50, max_value=1000, value=500, step=50,
+)
+tam_cor = col_b.number_input("Tam.", min_value=2, max_value=6, value=4)
+min_taxa = col_c.number_input(
+    "% Acerto", min_value=50.0, max_value=100.0, value=90.0, step=1.0,
+)
 
-col_c, col_d = st.sidebar.columns(2)
-min_taxa = col_c.number_input("% mínimo", 50.0, 100.0, 85.0, 1.0)
-gales = col_d.selectbox("Gales", [0, 1, 2], index=2, format_func=lambda x: f"G{x}")
+col_d, col_e = st.sidebar.columns(2)
+min_oc = col_d.number_input("Ocorr. Mín", min_value=2, max_value=50, value=15)
+gales = col_e.selectbox(
+    "Gale", [0, 1, 2], index=2, format_func=lambda x: f"G{x}",
+)
 
-if st.sidebar.button("🔄 Analisar Agora", use_container_width=True):
-    with st.spinner("Analisando histórico..."):
-        cores_h, uuids_h, pontos_h, _, _ = worker.client.buscar_historico(
+col_f, col_g = st.sidebar.columns([1, 1])
+btn_analisar = col_f.button("🔄 Analisar", use_container_width=True)
+btn_forcar = col_g.button("⚡ Forçar", use_container_width=True,
+                          help="Ignora o cache e busca histórico novo")
+
+if btn_analisar or btn_forcar:
+    with st.spinner(f"Analisando últimas {num_rodadas} rodadas..."):
+        analise = worker.analysis_service.obter_analise(
             mesa_id=worker.config.mesa_id,
             timezone=worker.config.timezone,
-            limite=worker.config.limite_rodadas,
+            num_rodadas=int(num_rodadas),
+            tamanho_cor=int(tam_cor),
+            min_ocorrencias=int(min_oc),
+            min_taxa=float(min_taxa),
+            usar_gale=int(gales),
+            forcar=bool(btn_forcar),
         )
-        if len(cores_h) < tam_cor + 5:
-            st.sidebar.warning("⚠️ Histórico insuficiente")
-        else:
-            analyzer = PatternsAnalyzer(cores_h, pontos_h)
-            st.session_state["_analise_cores"] = analyzer.analisar_cores(
-                tamanho=int(tam_cor), min_ocorrencias=int(min_oc),
-                min_assertividade=float(min_taxa), usar_gale=int(gales),
-            )
-            st.session_state["_analise_numeros"] = analyzer.analisar_numeros(
-                min_ocorrencias=int(min_oc),
-                min_assertividade=float(min_taxa),
-                usar_gale=int(gales),
-            )
-            st.session_state["_analise_seq_numeros"] = analyzer.analisar_sequencia_numeros(
-                tamanho=2, min_ocorrencias=max(2, int(min_oc) - 1),
-                min_assertividade=max(60.0, float(min_taxa) - 10),
-                usar_gale=int(gales),
-            )
-            st.session_state["_ultima_analise_ts"] = __import__("datetime").datetime.now().strftime("%H:%M:%S")
+        st.session_state["_analise_atual"] = analise
 
-# --- Renderiza aba de CORES ---
-if st.session_state.get("_analise_cores"):
-    with st.sidebar.expander(f"🎨 Análises de Cores ({len(st.session_state['_analise_cores'])})", expanded=True):
-        for i, p in enumerate(st.session_state["_analise_cores"][:30]):
-            cols = st.columns([5, 1])
-            with cols[0]:
+# --- Renderiza resultado da última análise ---
+analise = st.session_state.get("_analise_atual")
+
+if analise:
+    res = analise["resultados"]
+    total_rod = analise.get("total_rodadas", 0)
+    ts = analise.get("timestamp", "")
+    cache_tag = "💾 cache" if analise.get("cacheado") else "🌐 ao vivo"
+
+    st.sidebar.caption(
+        f"Analisadas {total_rod} rodadas · {ts} · {cache_tag}"
+    )
+
+    if analise.get("erro"):
+        st.sidebar.warning(f"⚠️ {analise['erro']}")
+
+    # -------- CORES --------
+    if res["cores"]:
+        with st.sidebar.expander(
+            f"🎨 Análises de Cores ({len(res['cores'])})", expanded=True,
+        ):
+            for i, p in enumerate(res["cores"][:20]):
+                cols = st.columns([6, 1])
+                with cols[0]:
+                    st.markdown(
+                        f"<div style='font-size:12px;line-height:1.35;color:#ddd'>"
+                        f"<span style='letter-spacing:2px'>{p.padrao}</span> "
+                        f"Apareceu <b>{p.ocorrencias}</b> vezes<br>"
+                        f"Pode indicar → <b>{p.sugestao}</b> "
+                        f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                        f"<span style='color:#888;font-size:10px'>"
+                        f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
+                        f"G2:{p.acertos_gale2} RED:{p.reds}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with cols[1]:
+                    if st.button("➕", key=f"add_cor_{i}_{p.padrao}",
+                                 help="Ativar como padrão fixo"):
+                        nome = f"AUTO_COR_{p.padrao}"
+                        worker.add_padrao(nome, list(p.padrao), p.sugestao)
+                        st.toast(f"Padrão {p.padrao} ativado!", icon="✅")
+    else:
+        st.sidebar.info("Nenhum padrão de cor atende aos filtros.")
+
+    # -------- NÚMEROS --------
+    if res["numeros"]:
+        with st.sidebar.expander(
+            f"🔢 Análises de Números ({len(res['numeros'])})", expanded=False,
+        ):
+            for i, p in enumerate(res["numeros"][:20]):
+                cols = st.columns([6, 1])
+                with cols[0]:
+                    st.markdown(
+                        f"<div style='font-size:12px;line-height:1.35;color:#ddd'>"
+                        f"<b style='font-size:14px'>{p.padrao}</b> "
+                        f"Apareceu <b>{p.ocorrencias}</b> vezes<br>"
+                        f"Pode indicar → <b>{p.sugestao}</b> "
+                        f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                        f"<span style='color:#888;font-size:10px'>"
+                        f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
+                        f"G2:{p.acertos_gale2} RED:{p.reds}</span>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
+                with cols[1]:
+                    if st.button("➕", key=f"add_num_{i}_{p.padrao}",
+                                 help="Ativar após este número"):
+                        nome = f"AUTO_NUM_{p.padrao}"
+                        worker.add_padrao(nome, [str(p.padrao)], p.sugestao)
+                        st.toast(f"Número {p.padrao} ativado!", icon="✅")
+    else:
+        st.sidebar.info("Nenhum padrão numérico atende aos filtros.")
+
+    # -------- SEQUÊNCIAS DE NÚMEROS --------
+    if res["sequencias"]:
+        with st.sidebar.expander(
+            f"🔗 Sequências de Números ({len(res['sequencias'])})",
+            expanded=False,
+        ):
+            for i, p in enumerate(res["sequencias"][:15]):
                 st.markdown(
-                    f"<div style='font-size:12px;color:#ddd;line-height:1.3'>"
-                    f"{p.padrao} Apareceu <b>{p.ocorrencias}</b> vezes<br>"
-                    f"Pode indicar → <b>{p.sugestao}</b> "
+                    f"<div style='font-size:12px;line-height:1.35;color:#ddd'>"
+                    f"<b>{p.padrao}</b> ×{p.ocorrencias} → "
+                    f"<b>{p.sugestao}</b> "
                     f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                    f"<span style='color:#888;font-size:10px'>"
                     f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
-                    f"G2:{p.acertos_gale2} RED:{p.reds}"
+                    f"G2:{p.acertos_gale2} RED:{p.reds}</span>"
                     f"</div>",
                     unsafe_allow_html=True,
                 )
-            with cols[1]:
-                if st.button("➕", key=f"add_cor_{i}", help="Adicionar como padrão fixo"):
-                    seq = [c for c in p.padrao]
-                    nome = f"AUTO_COR_{p.padrao}"
-                    worker.add_padrao(nome, seq, p.sugestao)
-                    st.success(f"Padrão {p.padrao} salvo!")
-
-# --- Renderiza aba de NÚMEROS ---
-if st.session_state.get("_analise_numeros"):
-    with st.sidebar.expander(f"🔢 Análises de Números ({len(st.session_state['_analise_numeros'])})", expanded=False):
-        for i, p in enumerate(st.session_state["_analise_numeros"][:30]):
-            cols = st.columns([5, 1])
-            with cols[0]:
-                st.markdown(
-                    f"<div style='font-size:12px;color:#ddd;line-height:1.3'>"
-                    f"<b>{p.padrao}</b> Apareceu <b>{p.ocorrencias}</b> vezes<br>"
-                    f"Pode indicar → <b>{p.sugestao}</b> "
-                    f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
-                    f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
-                    f"G2:{p.acertos_gale2} RED:{p.reds}"
-                    f"</div>",
-                    unsafe_allow_html=True,
-                )
-            with cols[1]:
-                if st.button("➕", key=f"add_num_{i}", help="Adicionar como padrão fixo"):
-                    nome = f"AUTO_NUM_{p.padrao}"
-                    worker.add_padrao(nome, [str(p.padrao)], p.sugestao)
-                    st.success(f"Número {p.padrao} salvo!")
-
-# --- Sequências de números ---
-if st.session_state.get("_analise_seq_numeros"):
-    with st.sidebar.expander(f"🔢 Sequências de Números ({len(st.session_state['_analise_seq_numeros'])})", expanded=False):
-        for i, p in enumerate(st.session_state["_analise_seq_numeros"][:20]):
-            st.markdown(
-                f"<div style='font-size:12px;color:#ddd;line-height:1.3'>"
-                f"<b>{p.padrao}</b> ×{p.ocorrencias} → <b>{p.sugestao}</b> "
-                f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
-                f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
-                f"G2:{p.acertos_gale2} RED:{p.reds}"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
 
 # --- Timestamp da última análise ---
 if st.session_state.get("_ultima_analise_ts"):
