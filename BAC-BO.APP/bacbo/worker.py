@@ -20,6 +20,10 @@ class BacBoWorker:
     MAX_CICLO = 500
 
     def __init__(self, client, notifier, db, config: Optional[BacBoConfig] = None) -> None:
+        # Serviço de análise (usado pela UI)
+        from .analysis_service import AnalysisService
+        self.analysis_service = AnalysisService(self.client, ttl_segundos=60)
+        
         self.client = client
         self.notifier = notifier
         self.db = db
@@ -237,7 +241,35 @@ class BacBoWorker:
                     item["sugestao"], 95.0, "auto_cor",
                     f"Sequência {''.join(item['padrao'])}",
                 ))
+                
+    def _detectar_sinais(self, cores, pontos, compostos) -> Optional[tuple]:
+        candidatos: List[tuple] = []
 
+        # 0) Padrões AUTO_NUM — o último número bateu
+        if pontos:
+            chave_num = f"AUTO_NUM_{pontos[-1]}"
+            if chave_num in self.state["PADROES_MANUAIS_COMPOSTOS"]:
+                item = self.state["PADROES_MANUAIS_COMPOSTOS"][chave_num]
+                candidatos.append((
+                    item["sugestao"], 90.0, "auto_num",
+                    f"Após número {pontos[-1]}",
+                ))
+
+        # 0b) Padrões AUTO_COR — sequência exata no fim
+        for chave, item in self.state["PADROES_MANUAIS_COMPOSTOS"].items():
+            if not chave.startswith("AUTO_COR_"):
+                continue
+            tam = len(item["padrao"])
+            if len(cores) >= tam and cores[-tam:] == item["padrao"]:
+                candidatos.append((
+                    item["sugestao"], 95.0, "auto_cor",
+                    f"Sequência {''.join(item['padrao'])}",
+                ))
+
+        # 1) Detector principal (padrão dinâmico) — continua abaixo
+        sug, p30, p50, desc = analisar_multi_amostra(
+            ...
+    
     def _detectar_sinais(self, cores, pontos, compostos) -> Optional[tuple]:
         candidatos: List[tuple] = []
 
