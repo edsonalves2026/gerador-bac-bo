@@ -36,6 +36,44 @@ def test_envia_novo_sinal(worker, fake_client, fake_notifier):
     assert worker.state["sugestao_atual"] in ("🔴", "🔵")
     assert len(fake_notifier.messages) >= 1
 
+def test_sinal_gera_evento_no_feed(worker, fake_client):
+    from tests.conftest import make_payload
+    BASE_CORES = ["🔴", "🔵", "🔴"] * 4
+    BASE_PONTOS = list(range(1, 13))
+    BASE_UUIDS = [f"u{i:02d}" for i in range(12)]
+    fake_client.responses.append(make_payload(BASE_CORES, BASE_UUIDS, BASE_PONTOS))
+
+    worker.state["bot_rodando"] = True
+    worker.config.usar_confluencia = False
+    worker._processar_rodada()
+
+    evs = worker.feed.eventos()
+    assert len(evs) >= 1
+    assert evs[0].tipo == "entrada"
+
+
+def test_win_gera_evento_resultado(worker, fake_client):
+    from tests.conftest import make_payload
+    BASE_CORES = ["🔴", "🔵", "🔴"] * 4
+    BASE_PONTOS = list(range(1, 13))
+    BASE_UUIDS = [f"u{i:02d}" for i in range(12)]
+    fake_client.responses.append(make_payload(BASE_CORES, BASE_UUIDS, BASE_PONTOS))
+
+    worker.state["bot_rodando"] = True
+    worker.config.usar_confluencia = False
+    worker._processar_rodada()
+    esperado = worker.state["sugestao_atual"]
+
+    fake_client.responses.append(make_payload(
+        BASE_CORES + [esperado],
+        BASE_UUIDS + ["nova"],
+        BASE_PONTOS + [99],
+    ))
+    worker._processar_rodada()
+
+    tipos = [e.tipo for e in worker.feed.eventos()]
+    assert "entrada" in tipos
+    assert "resultado" in tipos
 
 def test_nao_duplica_sinal_mesma_rodada(worker, fake_client, fake_notifier):
     payload = make_payload(BASE_CORES, BASE_UUIDS, BASE_PONTOS)
