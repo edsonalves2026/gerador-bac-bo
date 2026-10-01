@@ -220,6 +220,95 @@ if analise:
     else:
         st.sidebar.info("Nenhum padrão de cor atende aos filtros.")
 
+    # =============================================================================
+# 📈 PAINEL DE ESTATÍSTICAS (streaks + %)
+# =============================================================================
+if analise and analise.get("stats"):
+    stats = analise["stats"]
+    gale_label = {0: "SG (Sem Gale)", 1: "G1 (Gale 1)", 2: "G2 (Gale 2)"}[stats.gale]
+
+    with st.sidebar.container(border=True):
+        st.markdown(
+            f"### 📊 Estatísticas "
+            f"<span style='font-size:11px;color:#888'>· {gale_label}</span>",
+            unsafe_allow_html=True,
+        )
+
+        # Linha 1
+        c1, c2 = st.columns(2)
+        with c1:
+            st.markdown(
+                f"<div style='background:#1e1e2e;border-radius:8px;"
+                f"padding:8px 10px;display:flex;justify-content:space-between;"
+                f"align-items:center;font-size:13px'>"
+                f"<span>Máxima de <span style='color:#ff5555'>●</span>:</span>"
+                f"<b>{stats.max_red}</b>"
+                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
+                f"({stats.pct_red:.1f}%)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with c2:
+            st.markdown(
+                f"<div style='background:#1e1e2e;border-radius:8px;"
+                f"padding:8px 10px;display:flex;justify-content:space-between;"
+                f"align-items:center;font-size:13px'>"
+                f"<span>Máxima de <span style='color:#5599ff'>●</span>:</span>"
+                f"<b>{stats.max_blue}</b>"
+                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
+                f"({stats.pct_blue:.1f}%)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+
+        # Linha 2
+        c3, c4 = st.columns(2)
+        with c3:
+            st.markdown(
+                f"<div style='background:#1e1e2e;border-radius:8px;"
+                f"padding:8px 10px;display:flex;justify-content:space-between;"
+                f"align-items:center;font-size:13px'>"
+                f"<span>Máxima de <span style='color:#f5c542'>●</span>:</span>"
+                f"<b>{stats.max_tie}</b>"
+                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
+                f"({stats.pct_tie:.1f}%)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+        with c4:
+            st.markdown(
+                f"<div style='background:#1e1e2e;border-radius:8px;"
+                f"padding:8px 10px;display:flex;justify-content:space-between;"
+                f"align-items:center;font-size:13px'>"
+                f"<span>Máxima sem <span style='color:#f5c542'>●</span>:</span>"
+                f"<b>{stats.max_sem_tie}</b>"
+                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
+                f"({stats.pct_sem_tie:.1f}%)</span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+        # Distribuição detalhada (opcional, dentro de expander)
+        with st.expander("📋 Ver distribuições", expanded=False):
+            st.markdown(
+                f"**🔴** — {stats.n_streaks_red} streaks · "
+                f"top 5: `{sorted(stats.dist_red, reverse=True)[:5]}`"
+            )
+            st.markdown(
+                f"**🔵** — {stats.n_streaks_blue} streaks · "
+                f"top 5: `{sorted(stats.dist_blue, reverse=True)[:5]}`"
+            )
+            st.markdown(
+                f"**🟡** — {stats.n_streaks_tie} streaks · "
+                f"top 5: `{sorted(stats.dist_tie, reverse=True)[:5]}`"
+            )
+            st.markdown(
+                f"**sem 🟡** — {stats.n_streaks_sem_tie} streaks · "
+                f"top 5: `{sorted(stats.dist_sem_tie, reverse=True)[:5]}`"
+            )
+
     # -------- NÚMEROS --------
     if res["numeros"]:
         with st.sidebar.expander(
