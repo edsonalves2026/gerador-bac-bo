@@ -134,15 +134,112 @@ with st.sidebar.form("form_padrao", clear_on_submit=True):
         worker.add_padrao(nome, lista, cor)
         st.rerun()
 
-state = worker.get_state()
-if state["PADROES_MANUAIS_COMPOSTOS"]:
-    st.sidebar.markdown("**Padrões salvos:**")
-    for chave, item in list(state["PADROES_MANUAIS_COMPOSTOS"].items()):
-        st.sidebar.text(f"• {chave}: {' | '.join(item['padrao'])} ➔ {item['sugestao']}")
-        key_hash = hashlib.md5(chave.encode()).hexdigest()[:8]
-        if st.sidebar.button(f"🗑️ Remover {chave}", key=f"del_{key_hash}"):
-            worker.remover_padrao(chave)
-            st.rerun()
+# =============================================================================
+# 🔍 ANÁLISE AUTOMÁTICA DE PADRÕES (CORES + NÚMEROS)
+# =============================================================================
+from bacbo.patterns_analyzer import PatternsAnalyzer
+
+st.sidebar.divider()
+st.sidebar.subheader("📊 Análise Automática de Padrões")
+
+# --- Parâmetros de análise ---
+col_a, col_b = st.sidebar.columns(2)
+tam_cor = col_a.number_input("Tam. cores", 2, 6, 4)
+min_oc = col_b.number_input("Mín. ocor.", 2, 20, 4)
+
+col_c, col_d = st.sidebar.columns(2)
+min_taxa = col_c.number_input("% mínimo", 50.0, 100.0, 85.0, 1.0)
+gales = col_d.selectbox("Gales", [0, 1, 2], index=2, format_func=lambda x: f"G{x}")
+
+if st.sidebar.button("🔄 Analisar Agora", use_container_width=True):
+    with st.spinner("Analisando histórico..."):
+        cores_h, uuids_h, pontos_h, _, _ = worker.client.buscar_historico(
+            mesa_id=worker.config.mesa_id,
+            timezone=worker.config.timezone,
+            limite=worker.config.limite_rodadas,
+        )
+        if len(cores_h) < tam_cor + 5:
+            st.sidebar.warning("⚠️ Histórico insuficiente")
+        else:
+            analyzer = PatternsAnalyzer(cores_h, pontos_h)
+            st.session_state["_analise_cores"] = analyzer.analisar_cores(
+                tamanho=int(tam_cor), min_ocorrencias=int(min_oc),
+                min_assertividade=float(min_taxa), usar_gale=int(gales),
+            )
+            st.session_state["_analise_numeros"] = analyzer.analisar_numeros(
+                min_ocorrencias=int(min_oc),
+                min_assertividade=float(min_taxa),
+                usar_gale=int(gales),
+            )
+            st.session_state["_analise_seq_numeros"] = analyzer.analisar_sequencia_numeros(
+                tamanho=2, min_ocorrencias=max(2, int(min_oc) - 1),
+                min_assertividade=max(60.0, float(min_taxa) - 10),
+                usar_gale=int(gales),
+            )
+            st.session_state["_ultima_analise_ts"] = __import__("datetime").datetime.now().strftime("%H:%M:%S")
+
+# --- Renderiza aba de CORES ---
+if st.session_state.get("_analise_cores"):
+    with st.sidebar.expander(f"🎨 Análises de Cores ({len(st.session_state['_analise_cores'])})", expanded=True):
+        for i, p in enumerate(st.session_state["_analise_cores"][:30]):
+            cols = st.columns([5, 1])
+            with cols[0]:
+                st.markdown(
+                    f"<div style='font-size:12px;color:#ddd;line-height:1.3'>"
+                    f"{p.padrao} Apareceu <b>{p.ocorrencias}</b> vezes<br>"
+                    f"Pode indicar → <b>{p.sugestao}</b> "
+                    f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                    f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
+                    f"G2:{p.acertos_gale2} RED:{p.reds}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with cols[1]:
+                if st.button("➕", key=f"add_cor_{i}", help="Adicionar como padrão fixo"):
+                    seq = [c for c in p.padrao]
+                    nome = f"AUTO_COR_{p.padrao}"
+                    worker.add_padrao(nome, seq, p.sugestao)
+                    st.success(f"Padrão {p.padrao} salvo!")
+
+# --- Renderiza aba de NÚMEROS ---
+if st.session_state.get("_analise_numeros"):
+    with st.sidebar.expander(f"🔢 Análises de Números ({len(st.session_state['_analise_numeros'])})", expanded=False):
+        for i, p in enumerate(st.session_state["_analise_numeros"][:30]):
+            cols = st.columns([5, 1])
+            with cols[0]:
+                st.markdown(
+                    f"<div style='font-size:12px;color:#ddd;line-height:1.3'>"
+                    f"<b>{p.padrao}</b> Apareceu <b>{p.ocorrencias}</b> vezes<br>"
+                    f"Pode indicar → <b>{p.sugestao}</b> "
+                    f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                    f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
+                    f"G2:{p.acertos_gale2} RED:{p.reds}"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+            with cols[1]:
+                if st.button("➕", key=f"add_num_{i}", help="Adicionar como padrão fixo"):
+                    nome = f"AUTO_NUM_{p.padrao}"
+                    worker.add_padrao(nome, [str(p.padrao)], p.sugestao)
+                    st.success(f"Número {p.padrao} salvo!")
+
+# --- Sequências de números ---
+if st.session_state.get("_analise_seq_numeros"):
+    with st.sidebar.expander(f"🔢 Sequências de Números ({len(st.session_state['_analise_seq_numeros'])})", expanded=False):
+        for i, p in enumerate(st.session_state["_analise_seq_numeros"][:20]):
+            st.markdown(
+                f"<div style='font-size:12px;color:#ddd;line-height:1.3'>"
+                f"<b>{p.padrao}</b> ×{p.ocorrencias} → <b>{p.sugestao}</b> "
+                f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
+                f"G2:{p.acertos_gale2} RED:{p.reds}"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+# --- Timestamp da última análise ---
+if st.session_state.get("_ultima_analise_ts"):
+    st.sidebar.caption(f"Última análise: {st.session_state['_ultima_analise_ts']}")
 
 # ---------- Backtest ----------
 st.sidebar.divider()
