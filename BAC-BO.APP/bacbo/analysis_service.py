@@ -21,7 +21,7 @@ class AnalysisService:
         self._cache_ts: float = 0.0
         self._lock = threading.RLock()
 
-    def obter_analise(
+        def obter_analise(
         self,
         mesa_id: str,
         timezone: str,
@@ -32,13 +32,6 @@ class AnalysisService:
         usar_gale: int = 2,
         forcar: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Retorna dict com:
-          - 'resultados': {'cores': [...], 'numeros': [...], 'sequencias': [...]}
-          - 'total_rodadas': int (quantas foram efetivamente analisadas)
-          - 'timestamp': str
-          - 'cacheado': bool
-        """
         with self._lock:
             agora = time.time()
             if not forcar and self._cache and (agora - self._cache_ts) < self.ttl:
@@ -55,13 +48,13 @@ class AnalysisService:
             if len(cores) < tamanho_cor + 5:
                 return {
                     "resultados": {"cores": [], "numeros": [], "sequencias": []},
+                    "stats": None,
                     "total_rodadas": len(cores),
                     "timestamp": time.strftime("%H:%M:%S"),
                     "cacheado": False,
                     "erro": "Histórico insuficiente",
                 }
 
-            # Usa apenas as últimas `num_rodadas` efetivas
             cores_uso = cores[-num_rodadas:]
             pontos_uso = pontos[-num_rodadas:]
 
@@ -73,8 +66,13 @@ class AnalysisService:
                 usar_gale=usar_gale,
             )
 
+            # --- NOVO: painel de estatísticas ---
+            from .stats_analyzer import StatsAnalyzer
+            stats = StatsAnalyzer(cores_uso).calcular(gale=int(usar_gale))
+
             self._cache = {
                 "resultados": resultados,
+                "stats": stats,
                 "total_rodadas": len(cores_uso),
                 "timestamp": time.strftime("%H:%M:%S"),
                 "cacheado": False,
