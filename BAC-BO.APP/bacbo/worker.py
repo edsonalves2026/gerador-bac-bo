@@ -216,6 +216,28 @@ class BacBoWorker:
 
             self._buscar_e_enviar_sinal(cores, pontos, compostos, uuid_atual)
 
+            # 0) Padrões AUTO_NUM: último ponto bateu
+        if pontos:
+            ultimo_ponto = pontos[-1]
+            chave_num = f"AUTO_NUM_{ultimo_ponto}"
+            if chave_num in self.state["PADROES_MANUAIS_COMPOSTOS"]:
+                item = self.state["PADROES_MANUAIS_COMPOSTOS"][chave_num]
+                candidatos.append((
+                    item["sugestao"], 90.0, "auto_num",
+                    f"Após número {ultimo_ponto}",
+                ))
+
+            # 0b) Padrões AUTO_COR: sequência exata no fim
+        for chave, item in self.state["PADROES_MANUAIS_COMPOSTOS"].items():
+            if not chave.startswith("AUTO_COR_"):
+                continue
+            tam = len(item["padrao"])
+            if len(cores) >= tam and cores[-tam:] == item["padrao"]:
+                candidatos.append((
+                    item["sugestao"], 95.0, "auto_cor",
+                    f"Sequência {''.join(item['padrao'])}",
+                ))
+
     def _detectar_sinais(self, cores, pontos, compostos) -> Optional[tuple]:
         candidatos: List[tuple] = []
 
