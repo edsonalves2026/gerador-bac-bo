@@ -4,7 +4,9 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from .analysis import analisar_multi_amostra, processar_filtro_digitado
+from .analysis_service import AnalysisService
 from .config import BacBoConfig, CoresTerminal, log_terminal
+from .feed_service import FeedService
 from .risk import Banca, StopRules, sugerir_unidade
 from .strategies import (
     aplicar_confluencia,
@@ -16,25 +18,33 @@ from .strategies import (
 
 class BacBoWorker:
     MAX_LOGS = 100
-    MAX_HISTORICO = 200 
+    MAX_HISTORICO = 200
     MAX_CICLO = 500
 
-    def __init__(self, client, notifier, db, config: Optional[BacBoConfig] = None) -> None:
-from .feed_service import FeedService
-        self.feed = FeedService(db=self.db)
-        # Serviço de análise (usado pela UI)
-from .analysis_service import AnalysisService
-        self.analysis_service = AnalysisService(self.client, ttl_segundos=60)
-        
+    # ------------------------------------------------------------------ init
+    def __init__(
+        self,
+        client,
+        notifier,
+        db,
+        config: Optional[BacBoConfig] = None,
+    ) -> None:
+        # Dependências base PRIMEIRO
         self.client = client
         self.notifier = notifier
         self.db = db
         self.config = config or BacBoConfig()
 
+        # Infra de concorrência
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
+        # Sub-serviços (após atribuir client/db)
+        self.feed = FeedService(db=self.db)
+        self.analysis_service = AnalysisService(self.client, ttl_segundos=60)
+
+        # Gestão de risco
         self.banca = Banca(
             inicial=self.config.banca_inicial,
             aposta_base=self.config.aposta_base,
@@ -50,6 +60,7 @@ from .analysis_service import AnalysisService
         self.timestamps_entradas: List[datetime] = []
         self.motivo_bloqueio: Optional[str] = None
 
+        # Estado
         self.state: Dict[str, Any] = {
             "bot_rodando": False,
             "sinal_ativo": False,
@@ -69,7 +80,7 @@ from .analysis_service import AnalysisService
         self.state["PADROES_MANUAIS_COMPOSTOS"] = self.db.carregar_padroes()
         self.state["ranking_padroes"] = self.db.carregar_ranking()
 
-    # ------------------------------------------------------------------ life
+    # ------------------------------------------------------------ ciclo de vida
     def start(self) -> None:
         with self.lock:
             if self.thread and self.thread.is_alive():
@@ -79,19 +90,17 @@ from .analysis_service import AnalysisService
             self.stop_event.clear()
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
-        self._log("▶️ Motor iniciado.", CoresTerminal.VERDE)
 
-        # Em start():
+        self._log("▶️ Motor iniciado.", CoresTerminal.VERDE)
         self.feed.push_info("Motor iniciado")
 
-        # Em stop():
-        self.feed.push_info("Motor pausado")
-        
     def stop(self) -> None:
         with self.lock:
             self.state["bot_rodando"] = False
             self.stop_event.set()
+
         self._log("⏸️ Motor pausado.", CoresTerminal.AMARELO)
+        self.feed.push_info("Motor pausado")
 
     def update_config(self, **kwargs: Any) -> None:
         with self.lock:
@@ -100,18 +109,18 @@ from .analysis_service import AnalysisService
                     setattr(self.config, k, v)
 
     def get_state(self) -> Dict[str, Any]:
-
-    "feed_eventos": [e.to_dict() for e in self.feed.eventos(limite=50)],
-        
         with self.lock:
             return {
                 **self.state,
                 "historico_sinais": list(self.state["historico_sinais"]),
                 "historico_ciclo": list(self.state["historico_ciclo"]),
                 "log_eventos": list(self.state["log_eventos"]),
-                "ranking_padroes": {k: dict(v) for k, v in self.state["ranking_padroes"].items()},
+                "ranking_padroes": {
+                    k: dict(v) for k, v in self.state["ranking_padroes"].items()
+                },
                 "PADROES_MANUAIS_COMPOSTOS": {
-                    k: dict(v) for k, v in self.state["PADROES_MANUAIS_COMPOSTOS"].items()
+                    k: dict(v)
+                    for k, v in self.state["PADROES_MANUAIS_COMPOSTOS"].items()
                 },
                 "banca": {
                     "saldo": self.banca.saldo,
@@ -122,6 +131,7 @@ from .analysis_service import AnalysisService
                 },
                 "motivo_bloqueio": self.motivo_bloqueio,
                 "rodadas_persistidas": self.db.total_rodadas(self.config.mesa_id),
+                "feed_eventos": [e.to_dict() for e in self.feed.eventos(limite=50)],
             }
 
     def _log(self, msg: str, cor: str = CoresTerminal.RESET) -> None:
@@ -132,11 +142,13 @@ from .analysis_service import AnalysisService
             if len(self.state["log_eventos"]) > self.MAX_LOGS:
                 self.state["log_eventos"].pop()
 
-    # ------------------------------------------------------------- padrões
+    # ------------------------------------------------------------------ padrões
     def add_padrao(self, nome: str, padrao: List[str], sugestao: str) -> None:
         with self.lock:
             self.state["PADROES_MANUAIS_COMPOSTOS"][nome] = {
-                "padrao": padrao, "sugestao": sugestao, "ativo": True,
+                "padrao": padrao,
+                "sugestao": sugestao,
+                "ativo": True,
             }
         self.db.salvar_padrao(nome, padrao, sugestao)
         self._log(f"📌 Padrão '{nome}' salvo.", CoresTerminal.VERDE)
@@ -147,7 +159,7 @@ from .analysis_service import AnalysisService
         self.db.remover_padrao(nome)
         self._log(f"🗑️ Padrão '{nome}' removido.", CoresTerminal.AMARELO)
 
-    # --------------------------------------------------------------- loop
+    # --------------------------------------------------------------------- loop
     def _loop(self) -> None:
         while not self.stop_event.is_set():
             try:
@@ -164,7 +176,9 @@ from .analysis_service import AnalysisService
 
     def entradas_ultima_hora(self) -> int:
         corte = datetime.now() - timedelta(hours=1)
-        self.timestamps_entradas = [t for t in self.timestamps_entradas if t >= corte]
+        self.timestamps_entradas = [
+            t for t in self.timestamps_entradas if t >= corte
+        ]
         return len(self.timestamps_entradas)
 
     def _persistir_rodadas(self, mesa_id, uuids, cores, pontos) -> int:
@@ -183,7 +197,10 @@ from .analysis_service import AnalysisService
         if not uuids:
             return
 
-        novos = self._persistir_rodadas(self.config.mesa_id, pontos, cores, pontos)
+        # Persiste as rodadas novas
+        novos = self._persistir_rodadas(
+            self.config.mesa_id, uuids, cores, pontos
+        )
         if novos:
             self._log(f"💾 {novos} rodada(s) persistida(s)", CoresTerminal.CIANO)
 
@@ -197,114 +214,88 @@ from .analysis_service import AnalysisService
         if not self.state["bot_rodando"] or not nova:
             return
 
+        # Se há sinal ativo, verifica resultado
         if self.state["sinal_ativo"]:
             self._verificar_resultado(cores[-1], pontos[-1], uuid_atual)
 
+        # Se não há sinal, procura novo
         if not self.state["sinal_ativo"]:
+            # Janela horária
             if not self._dentro_janela():
                 self.motivo_bloqueio = "⏱️ Fora da janela de operação"
                 return
-                
-         # --- INÍCIO DA ALTERAÇÃO --- 
+
+            # Gestão de risco
             if self.config.usar_gestao_risco:
                 motivo = self.stop_rules.avaliar(
-                    self.state["historico_sinais"], self.banca, self.entradas_ultima_hora(),
+                    self.state["historico_sinais"],
+                    self.banca,
+                    self.entradas_ultima_hora(),
                 )
                 if motivo:
                     if motivo != self.motivo_bloqueio:
                         self._log(motivo, CoresTerminal.VERMELHO)
                         self.notifier.send(f"🛑 *BLOQUEIO ATIVO*\n{motivo}")
+                        self.feed.push_bloqueio(motivo)
                         self.motivo_bloqueio = motivo
                     return
+
                 if self.motivo_bloqueio:
                     self.notifier.send("✅ *BOT LIBERADO* — condições normalizadas")
+                    self.feed.push_info("Bot liberado — condições normalizadas")
                     self.motivo_bloqueio = None
 
-                cooldown = self.stop_rules.precisa_cooldown(self.state["historico_sinais"])
+                cooldown = self.stop_rules.precisa_cooldown(
+                    self.state["historico_sinais"]
+                )
                 if cooldown > 0:
-                    self._log(f"⏳ Cooldown: {cooldown} rodada(s)", CoresTerminal.AMARELO)
+                    self._log(
+                        f"⏳ Cooldown: {cooldown} rodada(s)", CoresTerminal.AMARELO
+                    )
                     return
             else:
+                # Sem gestão de risco: limpa bloqueios que não sejam de janela
                 if self.motivo_bloqueio and "⏱️" not in self.motivo_bloqueio:
                     self.motivo_bloqueio = None
-            # --- FIM DA ALTERAÇÃO ---
 
             self._buscar_e_enviar_sinal(cores, pontos, compostos, uuid_atual)
 
-            # 0) Padrões AUTO_NUM: último ponto bateu
-        if pontos:
-            ultimo_ponto = pontos[-1]
-            chave_num = f"AUTO_NUM_{ultimo_ponto}"
-            if chave_num in self.state["PADROES_MANUAIS_COMPOSTOS"]:
-                item = self.state["PADROES_MANUAIS_COMPOSTOS"][chave_num]
-                candidatos.append((
-                    item["sugestao"], 90.0, "auto_num",
-                    f"Após número {ultimo_ponto}",
-                ))
-
-            # 0b) Padrões AUTO_COR: sequência exata no fim
-        for chave, item in self.state["PADROES_MANUAIS_COMPOSTOS"].items():
-            if not chave.startswith("AUTO_COR_"):
-                continue
-            tam = len(item["padrao"])
-            if len(cores) >= tam and cores[-tam:] == item["padrao"]:
-                candidatos.append((
-                    item["sugestao"], 95.0, "auto_cor",
-                    f"Sequência {''.join(item['padrao'])}",
-                ))
-                
-    def _detectar_sinais(self, cores, pontos, compostos) -> Optional[tuple]:
+    # -------------------------------------------------------------- detecção
+    def _detectar_sinais(
+        self, cores: List[str], pontos: List[int], compostos: List[str]
+    ) -> Optional[tuple]:
+        """
+        Combina o detector principal (analysis) com estratégias extras
+        (streak fade, regressão de ponto, espelho) e aplica confluência.
+        """
         candidatos: List[tuple] = []
 
-        # 0) Padrões AUTO_NUM — o último número bateu
-        if pontos:
-            chave_num = f"AUTO_NUM_{pontos[-1]}"
-            if chave_num in self.state["PADROES_MANUAIS_COMPOSTOS"]:
-                item = self.state["PADROES_MANUAIS_COMPOSTOS"][chave_num]
-                candidatos.append((
-                    item["sugestao"], 90.0, "auto_num",
-                    f"Após número {pontos[-1]}",
-                ))
-
-        # 0b) Padrões AUTO_COR — sequência exata no fim
-        for chave, item in self.state["PADROES_MANUAIS_COMPOSTOS"].items():
-            if not chave.startswith("AUTO_COR_"):
-                continue
-            tam = len(item["padrao"])
-            if len(cores) >= tam and cores[-tam:] == item["padrao"]:
-                candidatos.append((
-                    item["sugestao"], 95.0, "auto_cor",
-                    f"Sequência {''.join(item['padrao'])}",
-                ))
-
-        # 1) Detector principal (padrão dinâmico) — continua abaixo
+        # 1) Detector principal (padrões fixos + AUTO_* + dinâmicos)
         sug, p30, p50, desc = analisar_multi_amostra(
-            ...
-    
-    def _detectar_sinais(self, cores, pontos, compostos) -> Optional[tuple]:
-        candidatos: List[tuple] = []
-
-        sug, p30, p50, desc = analisar_multi_amostra(
-            cores, compostos,
+            cores,
+            compostos,
             self.state["PADROES_MANUAIS_COMPOSTOS"],
             self.config.tamanho_padrao,
             self.config.sensibilidade_minima,
-            historico_pontos=pontos,     # ← NOVO: ativa AUTO_NUM_*
+            historico_pontos=pontos,
         )
         if sug:
             conf = max(p30, p50)
             candidatos.append((sug, conf, "principal", desc or ""))
 
+        # 2) Streak fade
         if self.config.usar_streak_fade:
             s = sinal_streak_fade(cores, self.config.streak_min)
             if s:
                 candidatos.append(s)
 
+        # 3) Regressão de ponto
         if self.config.usar_ponto_regressao:
             s = sinal_ponto_regressao(cores, pontos)
             if s:
                 candidatos.append(s)
 
+        # 4) Espelho
         if self.config.usar_espelho:
             s = sinal_espelho(cores)
             if s:
@@ -313,15 +304,25 @@ from .analysis_service import AnalysisService
         if not candidatos:
             return None
 
+        # Confluência (se exigida e houver 2+ candidatos)
         if self.config.usar_confluencia and len(candidatos) >= 2:
-            consolidado = aplicar_confluencia(candidatos, self.config.confluencia_min_ratio)
+            consolidado = aplicar_confluencia(
+                candidatos, self.config.confluencia_min_ratio
+            )
             if consolidado:
                 return consolidado
             return None
 
         return max(candidatos, key=lambda x: x[1])
 
-    def _buscar_e_enviar_sinal(self, cores, pontos, compostos, uuid_atual) -> None:
+    # ---------------------------------------------------------- envio de sinal
+    def _buscar_e_enviar_sinal(
+        self,
+        cores: List[str],
+        pontos: List[int],
+        compostos: List[str],
+        uuid_atual: str,
+    ) -> None:
         sinal = self._detectar_sinais(cores, pontos, compostos)
         if not sinal:
             return
@@ -330,7 +331,11 @@ from .analysis_service import AnalysisService
 
         sugestao, confianca, fonte, descricao = sinal
         nome = {"🔴": "🔴 BANKER", "🔵": "🔵 PLAYER", "🟡": "🟡 TIE"}[sugestao]
-        unidade = sugerir_unidade(confianca, odd=self.config.odd_alvo) if self.config.usar_kelly else 1.0
+        unidade = (
+            sugerir_unidade(confianca, odd=self.config.odd_alvo)
+            if self.config.usar_kelly
+            else 1.0
+        )
 
         with self.lock:
             self.state["sinal_ativo"] = True
@@ -340,17 +345,17 @@ from .analysis_service import AnalysisService
             self.state["ultimo_uuid_sinal_enviado"] = uuid_atual
             self.state["ultimo_uuid_resultado_verificado"] = None
             self.state["sinal_meta"] = {
-                "fonte": fonte, "confianca": confianca, "unidade": unidade,
+                "fonte": fonte,
+                "confianca": confianca,
+                "unidade": unidade,
             }
         self.timestamps_entradas.append(datetime.now())
 
         # Publica no feed ao vivo
         self.feed.push_entrada(
-            sugestao=sugestao,
-            gale_max=self.config.max_gale,
-            fonte=fonte,
+            sugestao=sugestao, gale_max=self.config.max_gale, fonte=fonte,
         )
-        
+
         msg = (
             "🤖 *BAC BO PRO - SINAL VIP*\n\n"
             f"🎯 *ENTRADA:* {nome}\n"
@@ -366,9 +371,16 @@ from .analysis_service import AnalysisService
             f"{self._obter_texto_placar()}"
         )
         if self.notifier.send(msg):
-            self._log(f"SINAL: {nome} | {fonte} | conf={confianca:.1f}%", CoresTerminal.VERDE)
+            self._log(
+                f"SINAL: {nome} | {fonte} | conf={confianca:.1f}%",
+                CoresTerminal.VERDE,
+            )
 
-    def _verificar_resultado(self, resultado: str, ponto: Optional[int], uuid_atual: str) -> None:
+    # ------------------------------------------------------ verificar resultado
+    def _verificar_resultado(
+        self, resultado: str, ponto: Optional[int], uuid_atual: str
+    ) -> None:
+        # Anti-duplicação: nunca processa a mesma rodada duas vezes
         if uuid_atual == self.state["ultimo_uuid_sinal_enviado"]:
             return
         if uuid_atual == self.state["ultimo_uuid_resultado_verificado"]:
@@ -389,9 +401,12 @@ from .analysis_service import AnalysisService
                 tipo, header = "WIN", "✅ *WIN DIRETO!* 🎯"
             else:
                 tipo, header = "WIN_G1", "✅ *WIN NO GALE 1!* 🎯"
+
             self._registrar_resultado(tipo, padrao_usado)
-            self.feed.push_resultado(tipo_win)
-            self.notifier.send(f"{header}\nResultado: `{txt}`\n\n{self._obter_texto_placar()}")
+            self.feed.push_resultado(tipo)
+            self.notifier.send(
+                f"{header}\nResultado: `{txt}`\n\n{self._obter_texto_placar()}"
+            )
             with self.lock:
                 self.state["sinal_ativo"] = False
                 self.state["padrao_selecionado"] = None
@@ -399,7 +414,9 @@ from .analysis_service import AnalysisService
         elif self.state["tentativa"] == 1:
             with self.lock:
                 self.state["tentativa"] = 2
-            self.notifier.send(f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}")
+            self.notifier.send(
+                f"⚠️ *NÃO BATEU 1ª → GALE 1*\nMantém: {esperado}"
+            )
 
         else:
             self._registrar_resultado("LOSS", padrao_usado)
@@ -410,21 +427,22 @@ from .analysis_service import AnalysisService
             with self.lock:
                 self.state["sinal_ativo"] = False
                 self.state["padrao_selecionado"] = None
-                self.feed.push_bloqueio(motivo)
-                self.notifier.send("✅ *BOT LIBERADO* — condições normalizadas")
-                self.feed.push_info("Bot liberado — condições normalizadas")
 
-    # ------------------------------------------------------------- ranking
+    # --------------------------------------------------------------- ranking
     def _registrar_resultado(self, resultado: str, padrao: Optional[str]) -> None:
         with self.lock:
             self.state["historico_sinais"].append(resultado)
             if len(self.state["historico_sinais"]) > self.MAX_HISTORICO:
                 self.state["historico_sinais"].pop(0)
+
             self.state["historico_ciclo"].append(resultado)
             if len(self.state["historico_ciclo"]) > self.MAX_CICLO:
                 self.state["historico_ciclo"].pop(0)
+
             if padrao:
-                d = self.state["ranking_padroes"].setdefault(padrao, {"wins": 0, "total": 0})
+                d = self.state["ranking_padroes"].setdefault(
+                    padrao, {"wins": 0, "total": 0}
+                )
                 d["total"] += 1
                 if resultado in ("WIN", "WIN_G1", "WIN_TIE"):
                     d["wins"] += 1
@@ -444,10 +462,16 @@ from .analysis_service import AnalysisService
             if d["total"] >= min_ops:
                 ass = (d["wins"] / d["total"]) * 100
                 ranking.append({
-                    "padrao": padrao, "acertos": d["wins"],
-                    "total": d["total"], "assertividade": ass,
+                    "padrao": padrao,
+                    "acertos": d["wins"],
+                    "total": d["total"],
+                    "assertividade": ass,
                 })
-        return sorted(ranking, key=lambda x: (x["assertividade"], x["total"]), reverse=True)
+        return sorted(
+            ranking,
+            key=lambda x: (x["assertividade"], x["total"]),
+            reverse=True,
+        )
 
     def _formatar_ranking_telegram(self) -> str:
         r = self.calcular_ranking()
@@ -466,7 +490,10 @@ from .analysis_service import AnalysisService
         if not h:
             return "📊 *PLACAR:* Aguardando..."
         t = len(h)
-        wd, wg, wt, ls = h.count("WIN"), h.count("WIN_G1"), h.count("WIN_TIE"), h.count("LOSS")
+        wd = h.count("WIN")
+        wg = h.count("WIN_G1")
+        wt = h.count("WIN_TIE")
+        ls = h.count("LOSS")
         ass = ((wd + wg + wt) / t * 100) if t else 0
         return (
             f"📊 *PLACAR ({t}):*\n"
@@ -477,8 +504,10 @@ from .analysis_service import AnalysisService
             f"DD máx: `{self.banca.drawdown_max:.2f}u`"
         )
 
-    # --------------------------------------------------------- relatório
-    def gerar_relatorio(self, limite_rodadas: int, texto_filtro: str) -> Tuple[bool, str]:
+    # --------------------------------------------------------- relatório manual
+    def gerar_relatorio(
+        self, limite_rodadas: int, texto_filtro: str
+    ) -> Tuple[bool, str]:
         entradas_f, pontos_f = processar_filtro_digitado(texto_filtro)
         cores, uuids, pontos, compostos, _ = self.client.buscar_historico(
             mesa_id=self.config.mesa_id,
@@ -492,6 +521,7 @@ from .analysis_service import AnalysisService
         amostra_pontos = pontos[-limite_rodadas:]
         amostra_compostos = compostos[-limite_rodadas:]
 
+        # ---- estatística do TIE ----
         idx_tie = [i for i, c in enumerate(amostra_cores) if c == "🟡"]
         n_tie = len(idx_tie)
         if n_tie >= 2:
@@ -509,6 +539,7 @@ from .analysis_service import AnalysisService
         contagem: Dict[str, Dict[str, Any]] = {}
 
         if pontos_f:
+            # ---- modo: mão gatilho por número ----
             pts = [int(p) for p in pontos_f]
             cores_alvo = []
             if "🔴 BANKER" in entradas_f:
@@ -521,14 +552,28 @@ from .analysis_service import AnalysisService
                 cores_alvo = ["🔴", "🔵", "🟡"]
 
             for i in range(len(amostra_cores) - 1):
-                if amostra_pontos[i] not in pts or amostra_cores[i] not in cores_alvo:
+                if (
+                    amostra_pontos[i] not in pts
+                    or amostra_cores[i] not in cores_alvo
+                ):
                     continue
                 chave = f"Mão Gatilho: {amostra_cores[i]} ({amostra_pontos[i]})"
-                alvo = cores_alvo[0] if len(cores_alvo) == 1 else amostra_cores[i]
-                nome_alvo = {"🔴": "🔴 BANKER", "🔵": "🔵 PLAYER", "🟡": "🟡 TIE"}[alvo]
+                alvo = (
+                    cores_alvo[0] if len(cores_alvo) == 1 else amostra_cores[i]
+                )
+                nome_alvo = {
+                    "🔴": "🔴 BANKER",
+                    "🔵": "🔵 PLAYER",
+                    "🟡": "🟡 TIE",
+                }[alvo]
                 d = contagem.setdefault(
                     chave,
-                    {"total": 0, "acertos_direto": 0, "acertos_gale": 0, "sugestao": nome_alvo},
+                    {
+                        "total": 0,
+                        "acertos_direto": 0,
+                        "acertos_gale": 0,
+                        "sugestao": nome_alvo,
+                    },
                 )
                 d["total"] += 1
                 r1 = amostra_cores[i + 1]
@@ -539,9 +584,11 @@ from .analysis_service import AnalysisService
                     if r2 == alvo or r2 == "🟡":
                         d["acertos_gale"] += 1
         else:
+            # ---- modo: padrões dinâmicos ----
             for i in range(self.config.tamanho_padrao, len(amostra_cores) - 1):
                 s, _, _, p = analisar_multi_amostra(
-                    amostra_cores[:i], amostra_compostos[:i],
+                    amostra_cores[:i],
+                    amostra_compostos[:i],
                     self.state["PADROES_MANUAIS_COMPOSTOS"],
                     self.config.tamanho_padrao,
                     self.config.sensibilidade_minima,
@@ -552,7 +599,13 @@ from .analysis_service import AnalysisService
                 if entradas_f and nome not in entradas_f:
                     continue
                 d = contagem.setdefault(
-                    p, {"total": 0, "acertos_direto": 0, "acertos_gale": 0, "sugestao": nome}
+                    p,
+                    {
+                        "total": 0,
+                        "acertos_direto": 0,
+                        "acertos_gale": 0,
+                        "sugestao": nome,
+                    },
                 )
                 d["total"] += 1
                 r1 = amostra_cores[i]
@@ -564,7 +617,9 @@ from .analysis_service import AnalysisService
                         d["acertos_gale"] += 1
 
         if not contagem:
-            return False, f"⚠️ Nenhum padrão atendeu aos critérios ('{texto_filtro}')."
+            return False, (
+                f"⚠️ Nenhum padrão atendeu aos critérios ('{texto_filtro}')."
+            )
 
         tot_s = sum(p["total"] for p in contagem.values())
         tot_d = sum(p["acertos_direto"] for p in contagem.values())
@@ -574,7 +629,8 @@ from .analysis_service import AnalysisService
 
         msg = (
             "📊 *RELATÓRIO DE ASSERTIVIDADE*\n"
-            f"🆔 `{self.config.mesa_id[:8]}...` | 🔄 `{len(amostra_cores)}` rodadas{filtro_txt}\n"
+            f"🆔 `{self.config.mesa_id[:8]}...` | 🔄 `{len(amostra_cores)}` "
+            f"rodadas{filtro_txt}\n"
             "-----------------------------------\n"
             f"{txt_tie}\n"
             "-----------------------------------\n"
@@ -585,15 +641,21 @@ from .analysis_service import AnalysisService
         )
         ordenados = sorted(
             contagem.items(),
-            key=lambda x: ((x[1]["acertos_direto"] + x[1]["acertos_gale"]) / x[1]["total"])
-            if x[1]["total"] else 0,
+            key=lambda x: (
+                (x[1]["acertos_direto"] + x[1]["acertos_gale"]) / x[1]["total"]
+            )
+            if x[1]["total"]
+            else 0,
             reverse=True,
         )
         for p, info in ordenados[:5]:
             tot = info["total"]
             ac = info["acertos_direto"] + info["acertos_gale"]
             t = (ac / tot * 100) if tot else 0.0
-            msg += f"\n• `{p}`\n  ➔ Alvo: *{info['sugestao']}* | `{t:.1f}%` ({ac}/{tot})\n"
+            msg += (
+                f"\n• `{p}`\n  ➔ Alvo: *{info['sugestao']}* | "
+                f"`{t:.1f}%` ({ac}/{tot})\n"
+            )
         msg += "\n⚠️ *Relatório estatístico gerado sob demanda.*"
 
         if self.notifier.send(msg):
