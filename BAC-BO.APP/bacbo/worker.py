@@ -20,8 +20,10 @@ class BacBoWorker:
     MAX_CICLO = 500
 
     def __init__(self, client, notifier, db, config: Optional[BacBoConfig] = None) -> None:
+from .feed_service import FeedService
+        self.feed = FeedService(db=self.db)
         # Serviço de análise (usado pela UI)
-        from .analysis_service import AnalysisService
+from .analysis_service import AnalysisService
         self.analysis_service = AnalysisService(self.client, ttl_segundos=60)
         
         self.client = client
