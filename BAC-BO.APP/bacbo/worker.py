@@ -224,6 +224,7 @@ class BacBoWorker:
             self.state["PADROES_MANUAIS_COMPOSTOS"],
             self.config.tamanho_padrao,
             self.config.sensibilidade_minima,
+            historico_pontos=pontos,     # ← NOVO: ativa AUTO_NUM_*
         )
         if sug:
             conf = max(p30, p50)
