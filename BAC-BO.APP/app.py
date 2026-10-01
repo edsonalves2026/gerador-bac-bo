@@ -60,6 +60,76 @@ worker.update_config(
     min_operacoes_ranking=int(MINR),
 )
 
+# =============================================================================
+# 📡 PAINEL "SINAIS AO VIVO" (feed cronológico estilo chat)
+# =============================================================================
+def _cor_css(cor: str) -> tuple:
+    """Retorna (bg, border, text) para o tipo de evento."""
+    mapa = {
+        "verde":     ("#0d2818", "#1a5c2e", "#4ade80"),
+        "vermelho":  ("#2a0f13", "#7f1d1d", "#f87171"),
+        "amarelo":   ("#2a2108", "#78350f", "#fbbf24"),
+        "azul":      ("#0c1e35", "#1e40af", "#60a5fa"),
+        "cinza":     ("#1a1a1e", "#333", "#aaa"),
+    }
+    return mapa.get(cor, mapa["cinza"])
+
+
+def renderizar_feed():
+    state = worker.get_state()
+    eventos = state.get("feed_eventos", [])
+
+    # Header com botão de limpar
+    col_title, col_btn = st.columns([5, 1])
+    col_title.markdown("### 📡 Sinais ao Vivo")
+    if col_btn.button("🗑️", key="limpar_feed", help="Limpar feed"):
+        worker.feed.limpar()
+        st.rerun()
+
+    if not eventos:
+        st.info("Nenhum sinal ainda. Ligue o robô para começar a monitorar.")
+        return
+
+    # Container scrollável
+    with st.container(height=520, border=True):
+        for ev in eventos[:40]:  # limita a 40 eventos
+            bg, border, text = _cor_css(ev["cor"])
+            icone = ev.get("icone", "•")
+            titulo = ev.get("titulo", "")
+            corpo = ev.get("corpo", "")
+            sub = ev.get("subtitulo", "")
+            ts = ev.get("ts", "")
+
+            html = (
+                f"<div style='"
+                f"background:{bg};border:1px solid {border};"
+                f"border-radius:8px;padding:10px 12px;margin-bottom:8px;"
+                f"font-family:-apple-system,Segoe UI,sans-serif;"
+                f"'>"
+                # header da linha
+                f"<div style='display:flex;justify-content:space-between;"
+                f"align-items:center;margin-bottom:4px'>"
+                f"<span style='color:{text};font-weight:600;font-size:12px;"
+                f"letter-spacing:0.5px'>{icone} {titulo}</span>"
+                f"<span style='color:#666;font-size:11px'>{ts}</span>"
+                f"</div>"
+                # corpo
+                f"<div style='color:#e5e5e5;font-size:13px;line-height:1.4'>"
+                f"{corpo}</div>"
+                f"{f'<div style=\'color:#888;font-size:11px;margin-top:4px\'>{sub}</div>' if sub else ''}"
+                f"</div>"
+            )
+            st.markdown(html, unsafe_allow_html=True)
+
+
+# Roda o feed num fragmento próprio para atualizar sozinho
+@st.fragment(run_every=3)
+def renderizar_feed_auto():
+    renderizar_feed()
+
+
+renderizar_feed_auto()
+
 # ---------- Controles do robô ----------
 st.sidebar.divider()
 c1, c2 = st.sidebar.columns(2)
