@@ -13,7 +13,86 @@ from bacbo.strategies import sinal_espelho, sinal_ponto_regressao, sinal_streak_
 from bacbo.worker import BacBoWorker
 
 st.set_page_config(page_title="Monitor Bac-Bo Telegram", page_icon="🤖", layout="wide")
+"""Entry point Streamlit — apenas UI."""
+import hashlib
+import sys
+import traceback
 
+import pandas as pd
+import streamlit as st
+
+st.set_page_config(page_title="Monitor Bac-Bo Telegram", page_icon="🤖", layout="wide")
+
+
+# -----------------------------------------------------------------------------
+# DIAGNÓSTICO DE IMPORTS — mostra erro detalhado se algo falhar
+# -----------------------------------------------------------------------------
+def _importar_seguro(nome_modulo: str, nomes: str = None):
+    """Importa e, se falhar, exibe o traceback completo na tela."""
+    try:
+        if nomes:
+            from importlib import import_module
+            m = import_module(nome_modulo)
+            for n in nomes.split(","):
+                getattr(m, n.strip())
+        else:
+            __import__(nome_modulo)
+        return True
+    except Exception:
+        st.error(f"❌ Falha ao importar `{nome_modulo}`")
+        st.code(traceback.format_exc(), language="python")
+        st.info(
+            "**Como corrigir:**\n"
+            "1. Verifique se o arquivo existe no repositório GitHub\n"
+            "2. Confirme que a pasta `bacbo/` está dentro de `BAC-BO.APP/`\n"
+            "3. Confirme que existe `bacbo/__init__.py`\n"
+            "4. Rode `git status` localmente — pode haver arquivos não commitados"
+        )
+        st.stop()
+
+
+# Verifica dependências externas primeiro
+for mod in ["pandas", "requests", "streamlit"]:
+    try:
+        __import__(mod)
+    except ImportError as e:
+        st.error(f"❌ Dependência faltando: `{mod}`")
+        st.code(traceback.format_exc(), language="python")
+        st.info("Verifique se `requirements.txt` está correto e foi commitado.")
+        st.stop()
+
+# Verifica imports internos (um por um, para isolar o erro)
+_importar_seguro("bacbo.config", "BacBoConfig, CoresTerminal, build_http_session")
+_importar_seguro("bacbo.analysis", "analisar_multi_amostra, processar_filtro_digitado")
+_importar_seguro("bacbo.client", "TipminerClient")
+_importar_seguro("bacbo.db", "Database")
+_importar_seguro("bacbo.notifier", "TelegramNotifier")
+_importar_seguro("bacbo.feed_service", "FeedService")
+_importar_seguro("bacbo.patterns_analyzer", "PatternsAnalyzer")
+_importar_seguro("bacbo.stats_analyzer", "StatsAnalyzer")
+_importar_seguro("bacbo.analysis_service", "AnalysisService")
+_importar_seguro("bacbo.worker", "BacBoWorker")
+_importar_seguro("bacbo.strategies", "sinal_streak_fade, sinal_ponto_regressao, sinal_espelho, aplicar_confluencia")
+_importar_seguro("bacbo.backtest", "Backtester")
+_importar_seguro("bacbo.risk", "Banca, StopRules, sugerir_unidade")
+
+# -----------------------------------------------------------------------------
+# Só agora faz os imports "de verdade"
+# -----------------------------------------------------------------------------
+from bacbo.analysis import analisar_multi_amostra
+from bacbo.backtest import Backtester
+from bacbo.client import TipminerClient
+from bacbo.config import BacBoConfig, CoresTerminal, build_http_session, log_terminal
+from bacbo.db import Database
+from bacbo.notifier import TelegramNotifier
+from bacbo.strategies import (
+    sinal_espelho,
+    sinal_ponto_regressao,
+    sinal_streak_fade,
+)
+from bacbo.worker import BacBoWorker
+
+# ... resto do app.py continua igual daqui pra baixo ...
 
 def carregar_credenciais():
     try:
