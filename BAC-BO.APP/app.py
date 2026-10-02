@@ -284,6 +284,13 @@ with st.sidebar.form("form_padrao", clear_on_submit=True):
         st.rerun()
 
 # =============================================================================
+# 🎯 ESTRATÉGIA PERSONALIZADA (com modal)
+# =============================================================================
+from bacbo.ui.estrategia_modal import render_estrategia_sidebar
+
+render_estrategia_sidebar(worker)
+
+# =============================================================================
 # 📊 ANÁLISE SOBRE AS ÚLTIMAS N RODADAS
 # =============================================================================
 st.sidebar.divider()
@@ -293,22 +300,32 @@ st.sidebar.subheader("📊 Análise Estatística")
 col_a, col_b, col_c = st.sidebar.columns(3)
 num_rodadas = col_a.number_input(
     "Nº rodadas", min_value=50, max_value=1000, value=500, step=50,
+    key="analise_num_rodadas",
 )
-tam_cor = col_b.number_input("Tam.", min_value=2, max_value=6, value=4)
+tam_cor = col_b.number_input(
+    "Tam.", min_value=2, max_value=6, value=4,
+    key="analise_tam_cor",
+)
 min_taxa = col_c.number_input(
     "% Acerto", min_value=50.0, max_value=100.0, value=90.0, step=1.0,
+    key="analise_min_taxa",
 )
 
 col_d, col_e = st.sidebar.columns(2)
-min_oc = col_d.number_input("Ocorr. Mín", min_value=2, max_value=50, value=15)
+min_oc = col_d.number_input(
+    "Ocorr. Mín", min_value=2, max_value=50, value=15,
+    key="analise_min_oc",
+)
 gales = col_e.selectbox(
-    "Gale", [0, 1, 2], index=2, format_func=lambda x: f"G{x}",
+    "Gale", [0, 1, 2], index=2,
+    format_func=lambda x: f"G{x}",
+    key="analise_gales",
 )
 
-col_f, col_g = st.sidebar.columns([1, 1])
+col_f, col_g = st.sidebar.columns(2)
 btn_analisar = col_f.button("🔄 Analisar", use_container_width=True)
 btn_forcar = col_g.button("⚡ Forçar", use_container_width=True,
-                          help="Ignora o cache e busca histórico novo")
+                          help="Ignora o cache")
 
 if btn_analisar or btn_forcar:
     with st.spinner(f"Analisando últimas {num_rodadas} rodadas..."):
@@ -324,7 +341,7 @@ if btn_analisar or btn_forcar:
         )
         st.session_state["_analise_atual"] = analise
 
-# --- Renderiza resultado da última análise ---
+# ---- Renderiza resultado ----
 analise = st.session_state.get("_analise_atual")
 
 if analise:
@@ -333,159 +350,153 @@ if analise:
     ts = analise.get("timestamp", "")
     cache_tag = "💾 cache" if analise.get("cacheado") else "🌐 ao vivo"
 
-    st.sidebar.caption(
-        f"Analisadas {total_rod} rodadas · {ts} · {cache_tag}"
-    )
+    st.sidebar.caption(f"Analisadas {total_rod} rodadas · {ts} · {cache_tag}")
 
     if analise.get("erro"):
         st.sidebar.warning(f"⚠️ {analise['erro']}")
 
-    # -------- CORES --------
+    # ============ 🎨 ANÁLISES DE CORES ============
     if res["cores"]:
         with st.sidebar.expander(
             f"🎨 Análises de Cores ({len(res['cores'])})", expanded=True,
         ):
-            for i, p in enumerate(res["cores"][:20]):
+            for i, p in enumerate(res["cores"][:30]):
                 cols = st.columns([6, 1])
                 with cols[0]:
                     st.markdown(
                         f"<div style='font-size:12px;line-height:1.35;color:#ddd'>"
-                        f"<span style='letter-spacing:2px'>{p.padrao}</span> "
-                        f"Apareceu <b>{p.ocorrencias}</b> vezes<br>"
+                        f"<span style='letter-spacing:2px;font-size:14px'>"
+                        f"{p.padrao}</span> Apareceu <b>{p.ocorrencias}</b> vezes<br>"
                         f"Pode indicar → <b>{p.sugestao}</b> "
                         f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
-                        f"<span style='color:#888;font-size:10px'>"
+                        f"<span style='color:#888;font-size:11px'>"
                         f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
                         f"G2:{p.acertos_gale2} RED:{p.reds}</span>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
                 with cols[1]:
-                    if st.button("➕", key=f"add_cor_{i}_{p.padrao}",
+                    key_unique = f"add_cor_{i}_{p.padrao}"
+                    if st.button("➕", key=key_unique,
                                  help="Ativar como padrão fixo"):
-                        nome = f"AUTO_COR_{p.padrao}"
-                        worker.add_padrao(nome, list(p.padrao), p.sugestao)
+                        nome_auto = f"AUTO_COR_{p.padrao}"
+                        worker.add_padrao(nome_auto, list(p.padrao), p.sugestao)
                         st.toast(f"Padrão {p.padrao} ativado!", icon="✅")
     else:
         st.sidebar.info("Nenhum padrão de cor atende aos filtros.")
 
-    # =============================================================================
-# 📈 PAINEL DE ESTATÍSTICAS (streaks + %)
-# =============================================================================
-if analise and analise.get("stats"):
-    stats = analise["stats"]
-    gale_label = {0: "SG (Sem Gale)", 1: "G1 (Gale 1)", 2: "G2 (Gale 2)"}[stats.gale]
-
-    with st.sidebar.container(border=True):
-        st.markdown(
-            f"### 📊 Estatísticas "
-            f"<span style='font-size:11px;color:#888'>· {gale_label}</span>",
-            unsafe_allow_html=True,
-        )
-
-        # Linha 1
-        c1, c2 = st.columns(2)
-        with c1:
-            st.markdown(
-                f"<div style='background:#1e1e2e;border-radius:8px;"
-                f"padding:8px 10px;display:flex;justify-content:space-between;"
-                f"align-items:center;font-size:13px'>"
-                f"<span>Máxima de <span style='color:#ff5555'>●</span>:</span>"
-                f"<b>{stats.max_red}</b>"
-                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
-                f"({stats.pct_red:.1f}%)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        with c2:
-            st.markdown(
-                f"<div style='background:#1e1e2e;border-radius:8px;"
-                f"padding:8px 10px;display:flex;justify-content:space-between;"
-                f"align-items:center;font-size:13px'>"
-                f"<span>Máxima de <span style='color:#5599ff'>●</span>:</span>"
-                f"<b>{stats.max_blue}</b>"
-                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
-                f"({stats.pct_blue:.1f}%)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-        st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-
-        # Linha 2
-        c3, c4 = st.columns(2)
-        with c3:
-            st.markdown(
-                f"<div style='background:#1e1e2e;border-radius:8px;"
-                f"padding:8px 10px;display:flex;justify-content:space-between;"
-                f"align-items:center;font-size:13px'>"
-                f"<span>Máxima de <span style='color:#f5c542'>●</span>:</span>"
-                f"<b>{stats.max_tie}</b>"
-                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
-                f"({stats.pct_tie:.1f}%)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-        with c4:
-            st.markdown(
-                f"<div style='background:#1e1e2e;border-radius:8px;"
-                f"padding:8px 10px;display:flex;justify-content:space-between;"
-                f"align-items:center;font-size:13px'>"
-                f"<span>Máxima sem <span style='color:#f5c542'>●</span>:</span>"
-                f"<b>{stats.max_sem_tie}</b>"
-                f"<span style='color:#7fdb7f;font-size:11px;margin-left:6px'>"
-                f"({stats.pct_sem_tie:.1f}%)</span>"
-                f"</div>",
-                unsafe_allow_html=True,
-            )
-
-        # Distribuição detalhada (opcional, dentro de expander)
-        with st.expander("📋 Ver distribuições", expanded=False):
-            st.markdown(
-                f"**🔴** — {stats.n_streaks_red} streaks · "
-                f"top 5: `{sorted(stats.dist_red, reverse=True)[:5]}`"
-            )
-            st.markdown(
-                f"**🔵** — {stats.n_streaks_blue} streaks · "
-                f"top 5: `{sorted(stats.dist_blue, reverse=True)[:5]}`"
-            )
-            st.markdown(
-                f"**🟡** — {stats.n_streaks_tie} streaks · "
-                f"top 5: `{sorted(stats.dist_tie, reverse=True)[:5]}`"
-            )
-            st.markdown(
-                f"**sem 🟡** — {stats.n_streaks_sem_tie} streaks · "
-                f"top 5: `{sorted(stats.dist_sem_tie, reverse=True)[:5]}`"
-            )
-
-    # -------- NÚMEROS --------
+    # ============ 🔢 ANÁLISES DE NÚMEROS ============
     if res["numeros"]:
         with st.sidebar.expander(
             f"🔢 Análises de Números ({len(res['numeros'])})", expanded=False,
         ):
-            for i, p in enumerate(res["numeros"][:20]):
+            for i, p in enumerate(res["numeros"][:30]):
                 cols = st.columns([6, 1])
                 with cols[0]:
                     st.markdown(
                         f"<div style='font-size:12px;line-height:1.35;color:#ddd'>"
-                        f"<b style='font-size:14px'>{p.padrao}</b> "
+                        f"<b style='font-size:16px'>{p.padrao}</b> "
                         f"Apareceu <b>{p.ocorrencias}</b> vezes<br>"
                         f"Pode indicar → <b>{p.sugestao}</b> "
                         f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
-                        f"<span style='color:#888;font-size:10px'>"
+                        f"<span style='color:#888;font-size:11px'>"
                         f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
                         f"G2:{p.acertos_gale2} RED:{p.reds}</span>"
                         f"</div>",
                         unsafe_allow_html=True,
                     )
                 with cols[1]:
-                    if st.button("➕", key=f"add_num_{i}_{p.padrao}",
+                    key_unique = f"add_num_{i}_{p.padrao}"
+                    if st.button("➕", key=key_unique,
                                  help="Ativar após este número"):
-                        nome = f"AUTO_NUM_{p.padrao}"
-                        worker.add_padrao(nome, [str(p.padrao)], p.sugestao)
+                        nome_auto = f"AUTO_NUM_{p.padrao}"
+                        worker.add_padrao(nome_auto, [str(p.padrao)], p.sugestao)
                         st.toast(f"Número {p.padrao} ativado!", icon="✅")
     else:
         st.sidebar.info("Nenhum padrão numérico atende aos filtros.")
+
+    # ============ 🔗 SEQUÊNCIAS DE NÚMEROS ============
+    if res["sequencias"]:
+        with st.sidebar.expander(
+            f"🔗 Sequências de Números ({len(res['sequencias'])})",
+            expanded=False,
+        ):
+            for i, p in enumerate(res["sequencias"][:15]):
+                st.markdown(
+                    f"<div style='font-size:12px;line-height:1.35;color:#ddd'>"
+                    f"<b>{p.padrao}</b> ×{p.ocorrencias} → "
+                    f"<b>{p.sugestao}</b> "
+                    f"<span style='color:#7fdb7f'>({p.taxa_acerto:.2f}%)</span> "
+                    f"<span style='color:#888;font-size:11px'>"
+                    f"SG:{p.acertos_direto} G1:{p.acertos_gale1} "
+                    f"G2:{p.acertos_gale2} RED:{p.reds}</span>"
+                    f"</div>",
+                    unsafe_allow_html=True,
+                )
+
+    # ============ 📊 PAINEL DE ESTATÍSTICAS ============
+    if analise.get("stats"):
+        stats = analise["stats"]
+        gale_label = {0: "SG", 1: "G1", 2: "G2"}.get(stats.gale, "—")
+
+        with st.sidebar.container(border=True):
+            st.markdown(f"#### 📊 Estatísticas · `{gale_label}`")
+
+            c1, c2 = st.columns(2)
+            with c1:
+                st.markdown(
+                    f"<div style='background:#1e1e2e;border-radius:6px;"
+                    f"padding:6px 8px;display:flex;justify-content:space-between;"
+                    f"font-size:12px'>"
+                    f"<span>Máx 🔴:</span>"
+                    f"<b>{stats.max_red}</b>"
+                    f"<span style='color:#7fdb7f;font-size:10px;margin-left:4px'>"
+                    f"({stats.pct_red:.0f}%)</span></div>",
+                    unsafe_allow_html=True,
+                )
+            with c2:
+                st.markdown(
+                    f"<div style='background:#1e1e2e;border-radius:6px;"
+                    f"padding:6px 8px;display:flex;justify-content:space-between;"
+                    f"font-size:12px'>"
+                    f"<span>Máx 🔵:</span>"
+                    f"<b>{stats.max_blue}</b>"
+                    f"<span style='color:#7fdb7f;font-size:10px;margin-left:4px'>"
+                    f"({stats.pct_blue:.0f}%)</span></div>",
+                    unsafe_allow_html=True,
+                )
+
+            c3, c4 = st.columns(2)
+            with c3:
+                st.markdown(
+                    f"<div style='background:#1e1e2e;border-radius:6px;"
+                    f"padding:6px 8px;display:flex;justify-content:space-between;"
+                    f"font-size:12px;margin-top:4px'>"
+                    f"<span>Máx 🟡:</span>"
+                    f"<b>{stats.max_tie}</b>"
+                    f"<span style='color:#7fdb7f;font-size:10px;margin-left:4px'>"
+                    f"({stats.pct_tie:.0f}%)</span></div>",
+                    unsafe_allow_html=True,
+                )
+            with c4:
+                st.markdown(
+                    f"<div style='background:#1e1e2e;border-radius:6px;"
+                    f"padding:6px 8px;display:flex;justify-content:space-between;"
+                    f"font-size:12px;margin-top:4px'>"
+                    f"<span>Máx sem 🟡:</span>"
+                    f"<b>{stats.max_sem_tie}</b>"
+                    f"<span style='color:#7fdb7f;font-size:10px;margin-left:4px'>"
+                    f"({stats.pct_sem_tie:.0f}%)</span></div>",
+                    unsafe_allow_html=True,
+                )
+                
+    else:
+        st.sidebar.info("Nenhum padrão de cor atende aos filtros.")
+
+    # 🔬 Backtest
+        st.sidebar.divider()
+        st.sidebar.subheader("🔬 Backtest")
+        ...
 
     # -------- SEQUÊNCIAS DE NÚMEROS --------
     if res["sequencias"]:
