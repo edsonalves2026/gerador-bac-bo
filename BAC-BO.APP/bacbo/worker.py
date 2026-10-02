@@ -2,8 +2,11 @@
 
 import threading
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional, Tuple
+from zoneinfo import ZoneInfo
 
+TZ_BR = ZoneInfo("America/Sao_Paulo")
+
+from typing import Any, Dict, List, Optional, Tuple
 from .analysis import analisar_multi_amostra, processar_filtro_digitado
 from .analysis_service import AnalysisService
 from .config import BacBoConfig, CoresTerminal, log_terminal
@@ -137,7 +140,7 @@ class BacBoWorker:
 
     def _log(self, msg: str, cor: str = CoresTerminal.RESET) -> None:
         log_terminal(msg, cor)
-        horario = datetime.now().strftime("%H:%M:%S")
+        horario = datetime.now(TZ_BR).strftime("%H:%M:%S")
         with self.lock:
             self.state["log_eventos"].insert(0, f"[{horario}] {msg}")
             if len(self.state["log_eventos"]) > self.MAX_LOGS:
