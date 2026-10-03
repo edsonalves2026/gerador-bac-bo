@@ -46,7 +46,7 @@ class BacBoConfig:
     streak_min: int = 4
     usar_ponto_regressao: bool = True
     usar_espelho: bool = False
-    usar_confluencia: bool = True
+    usar_confluencia: bool = False
     confluencia_min_ratio: float = 0.66
 
     # Risco
@@ -63,7 +63,7 @@ class BacBoConfig:
     stop_win_sessao: float = 10.0
     cooldown_apos_loss: int = 2
     max_entradas_hora: int = 20
-    usar_gestao_risco: bool = True
+    usar_gestao_risco: bool = False
 
     # Janela operacional
     hora_inicio: int = 10
