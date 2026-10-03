@@ -1,5 +1,4 @@
-@"
-# Python
+﻿# Python
 __pycache__/
 *.pyc
 *.pyo
@@ -11,21 +10,18 @@ __pycache__/
 venv/
 env/
 
-# Banco de dados local
+# Banco local
 bacbo.db
+*.db
 
-# Secrets (NUNCA commitar!)
+# Secrets
 .streamlit/secrets.toml
 secrets.toml
 
-# Arquivos temporários
+# Temporários
 teste_api.py
 *.log
 
 # Sistema
 .DS_Store
 Thumbs.db
-"@ | Out-File -FilePath ".gitignore" -Encoding utf8
-
-Write-Host "✅ .gitignore criado:"
-Get-Content ".gitignore"
