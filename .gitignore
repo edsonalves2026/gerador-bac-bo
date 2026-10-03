@@ -1,0 +1,31 @@
+@"
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Banco de dados local
+bacbo.db
+
+# Secrets (NUNCA commitar!)
+.streamlit/secrets.toml
+secrets.toml
+
+# Arquivos temporários
+teste_api.py
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db
+"@ | Out-File -FilePath ".gitignore" -Encoding utf8
+
+Write-Host "✅ .gitignore criado:"
+Get-Content ".gitignore"
