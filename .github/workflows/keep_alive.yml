@@ -1,0 +1,17 @@
+﻿name: Keep Streamlit Alive
+
+on:
+  schedule:
+    - cron: '0 */6 * * *'
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping Streamlit App
+        run: |
+          echo "Pinging Streamlit app..."
+          curl -s -o /dev/null -w "HTTP Status: %{http_code}\n" \
+            https://gerador-bac-bo-steyc7b62upmtekbanb652.streamlit.app
+          echo "Ping done at \10/03/2026 16:03:43"
