@@ -65,7 +65,13 @@ def config():
         min_operacoes_ranking=2,
     )
 
-
 @pytest.fixture
-def worker(fake_client, fake_notifier, memory_db, config):
-    return BacBoWorker(fake_client, fake_notifier, memory_db, config)
+def worker(memory_db, fake_client, fake_notifier):
+    config = BacBoConfig(
+        operar_fim_de_semana=True,
+        hora_inicio=0,
+        hora_fim=23,
+        usar_gestao_risco=False,   # também ajuda
+    )
+    w = BacBoWorker(fake_client, fake_notifier, memory_db, config)
+    return w

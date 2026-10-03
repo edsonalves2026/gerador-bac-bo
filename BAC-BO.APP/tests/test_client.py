@@ -9,7 +9,7 @@ def _resp(payload, status=200):
     return m
 
 
-def test_sucesso_inverte_ordem():
+def test_retorna_ordem_cronologica():
     session = MagicMock()
     session.get.return_value = _resp(
         [
@@ -19,10 +19,10 @@ def test_sucesso_inverte_ordem():
         ]
     )
     cores, uuids, pontos, comp, exib = TipminerClient(session).buscar_historico("m1")
-    assert cores == ["🟡", "🔵", "🔴"]
-    assert uuids == ["c", "b", "a"]
-    assert pontos == [1, 10, 8]
-    assert comp == ["🟡 1", "🔵 10", "🔴 8"]
+    assert cores == ["🔴", "🔵", "🟡"]
+    assert uuids == ["a", "b", "c"]
+    assert pontos == [8, 10, 1]
+    assert comp == ["🔴 8", "🔵 10", "🟡 1"]
 
 
 def test_status_erro():

@@ -28,7 +28,6 @@ st.set_page_config(
 # DIAGNÓSTICO DE IMPORTS — mostra erro detalhado se algo falhar
 # -----------------------------------------------------------------------------
 def _importar_seguro(nome_modulo: str, nomes: str = None) -> bool:
-    """Importa e, se falhar, exibe o traceback completo na tela."""
     try:
         if nomes:
             from importlib import import_module
@@ -39,17 +38,11 @@ def _importar_seguro(nome_modulo: str, nomes: str = None) -> bool:
             __import__(nome_modulo)
         return True
     except Exception:
+        import traceback as _tb
+        print(f"❌ FALHA IMPORT {nome_modulo}:\n{_tb.format_exc()}", flush=True)
         st.error(f"❌ Falha ao importar `{nome_modulo}`")
-        st.code(traceback.format_exc(), language="python")
-        st.info(
-            "**Como corrigir:**\n"
-            "1. Verifique se o arquivo existe no repositório GitHub\n"
-            "2. Confirme que a pasta `bacbo/` está dentro de `BAC-BO.APP/`\n"
-            "3. Confirme que existe `bacbo/__init__.py`\n"
-            "4. Rode `git status` localmente — pode haver arquivos não commitados"
-        )
+        st.code(_tb.format_exc(), language="python")
         st.stop()
-
 
 # Dependências externas
 for _mod in ["pandas", "requests", "streamlit"]:
@@ -110,7 +103,6 @@ def carregar_credenciais():
         log_terminal(f"⚠️ Credenciais ausentes: {e}", CoresTerminal.AMARELO)
         return None, None
 
-
 @st.cache_resource
 def get_worker() -> BacBoWorker:
     token, chat_id = carregar_credenciais()
@@ -123,9 +115,12 @@ def get_worker() -> BacBoWorker:
     notifier = TelegramNotifier(token, chat_id, session=session, timeout=5)
     db = Database("bacbo.db")
     w = BacBoWorker(client, notifier, db, BacBoConfig())
-    w.start()
-    return w
 
+    log_terminal(f"🚀 Worker criado. Iniciando motor...", CoresTerminal.VERDE)
+    w.start()
+    log_terminal(f"✅ Worker iniciado. bot_rodando={w.state['bot_rodando']}", CoresTerminal.VERDE)
+
+    return w
 
 worker = get_worker()
 

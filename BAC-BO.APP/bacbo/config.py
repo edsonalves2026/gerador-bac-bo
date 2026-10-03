@@ -68,7 +68,7 @@ class BacBoConfig:
     # Janela operacional
     hora_inicio: int = 10
     hora_fim: int = 23
-    operar_fim_de_semana: bool = False
+    operar_fim_de_semana: bool = True
 
 
 def build_http_session() -> requests.Session:

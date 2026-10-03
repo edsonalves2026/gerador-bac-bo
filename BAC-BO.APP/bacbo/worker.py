@@ -90,12 +90,12 @@ class BacBoWorker:
         with self.lock:
             if self.thread and self.thread.is_alive():
                 self.state["bot_rodando"] = True
+                log_terminal("⚠️ Thread já está viva, apenas marcando bot_rodando=True")
                 return
             self.state["bot_rodando"] = True
             self.stop_event.clear()
             self.thread = threading.Thread(target=self._loop, daemon=True)
             self.thread.start()
-
         self._log("▶️ Motor iniciado.", CoresTerminal.VERDE)
         self.feed.push_info("Motor iniciado")
 
@@ -166,12 +166,21 @@ class BacBoWorker:
 
     # --------------------------------------------------------------------- loop
     def _loop(self) -> None:
+        import traceback
+        ciclos = 0
+        print(f"[LOOP] Iniciando loop com intervalo={self.config.intervalo_verificacao}s", flush=True)
         while not self.stop_event.is_set():
             try:
                 self._processar_rodada()
+                ciclos += 1
+                if ciclos % 10 == 0:
+                    print(f"[LOOP] Ciclo {ciclos} OK. Rodadas no banco: {self.db.total_rodadas(self.config.mesa_id)}", flush=True)
             except Exception as e:
+                print(f"[LOOP] ❌ ERRO: {e}", flush=True)
+                print(f"[LOOP] Traceback:\n{traceback.format_exc()}", flush=True)
                 self._log(f"❌ Erro no loop: {str(e)[:120]}", CoresTerminal.VERMELHO)
             self.stop_event.wait(self.config.intervalo_verificacao)
+        print(f"[LOOP] Loop encerrado após {ciclos} ciclos", flush=True)
 
     def _dentro_janela(self) -> bool:
         agora = datetime.now()
@@ -210,24 +219,22 @@ class BacBoWorker:
                 self.state["ultimo_uuid_processado"] = uuid_atual
             self._log(f"Nova rodada: {exibicao[-1]}", CoresTerminal.AZUL)
 
+        
         if not self.state["bot_rodando"] or not nova:
             return
 
-        # Se há sinal ativo, verifica resultado
         if self.state["sinal_ativo"]:
             self._verificar_resultado(cores[-1], pontos[-1], uuid_atual)
-            # Se o sinal foi finalizado (WIN/LOSS) nesta rodada,
+            # Se o sinal foi finalizado (WIN/LOSS/TIE) nesta rodada,
             # NÃO busca novo sinal — evita emitir 2 sinais na mesma rodada
             if not self.state["sinal_ativo"]:
                 return
 
-        # Se não há sinal, procura novo
         if not self.state["sinal_ativo"]:
             # Janela horária
             if not self._dentro_janela():
-                self.motivo_bloqueio = "⏱️ Fora da janela de operação"
-                return
-
+                ...
+                
             # Gestão de risco
             if self.config.usar_gestao_risco:
                 motivo = self.stop_rules.avaliar(
@@ -273,13 +280,10 @@ class BacBoWorker:
         """
         candidatos: List[tuple] = []
 
-        # 1) Detector principal (padrões fixos + AUTO_* + dinâmicos)
+        # 1) Detector principal
         sug, p30, p50, desc = analisar_multi_amostra(
-            cores,
-            compostos,
-            self.state["PADROES_MANUAIS_COMPOSTOS"],
-            self.config.tamanho_padrao,
-            self.config.sensibilidade_minima,
+            cores, compostos, self.state["PADROES_MANUAIS_COMPOSTOS"],
+            self.config.tamanho_padrao, self.config.sensibilidade_minima,
             historico_pontos=pontos,
         )
         if sug:
@@ -307,15 +311,15 @@ class BacBoWorker:
         if not candidatos:
             return None
 
-        # Confluência (se exigida e houver 2+ candidatos)
-        if self.config.usar_confluencia and len(candidatos) >= 2:
+        # Tenta confluência primeiro, se ativada
+        if self.config.usar_confluencia:
             consolidado = aplicar_confluencia(
                 candidatos, self.config.confluencia_min_ratio
             )
             if consolidado:
                 return consolidado
-            return None
 
+        # Fallback: melhor candidato individual
         return max(candidatos, key=lambda x: x[1])
 
     # ---------------------------------------------------------- envio de sinal
