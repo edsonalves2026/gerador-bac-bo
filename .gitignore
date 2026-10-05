@@ -1,2 +1,26 @@
 
 .streamlit/secrets.toml
+
+# Segurança
+BAC-BO.APP/.streamlit/secrets.toml
+.streamlit/secrets.toml
+
+# Cache Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Pytest
+.pytest_cache/
+
+# Banco local
+bacbo.db
+*.db
+
+# Ambiente virtual
+.venv/
+venv/
+
+# Logs
+*.log
