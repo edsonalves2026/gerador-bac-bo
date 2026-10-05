@@ -15,11 +15,16 @@ from .feed_service import FeedService
 from .risk import Banca, StopRules, sugerir_unidade
 from .strategies import (
     aplicar_confluencia,
+    sinal_ciclo_curto,
     sinal_espelho,
+    sinal_forca_lado,
     sinal_ponto_regressao,
+    sinal_repeticao_numerica,
+    sinal_sanduiche,
     sinal_streak_fade,
+    sinal_zona_tie,
 )
-
+from .strategies_tie import sinal_tie_intervalo 
 
 class BacBoWorker:
     MAX_LOGS = 100
@@ -276,7 +281,9 @@ class BacBoWorker:
     ) -> Optional[tuple]:
         """
         Combina o detector principal (analysis) com estratégias extras
-        (streak fade, regressão de ponto, espelho) e aplica confluência.
+        (streak fade, regressão de ponto, espelho, sanduíche, repetição,
+        ciclo curto, zona TIE, força lado) e TIE por intervalo.
+        Aplica filtro de confiança e confluência.
         """
         candidatos: List[tuple] = []
 
@@ -308,27 +315,66 @@ class BacBoWorker:
             if s:
                 candidatos.append(s)
 
+        # =========================================================================
+        # 5) NOVOS DETECTORES (Etapa 2)
+        # =========================================================================
+
+        # Sanduíche (X-Y-X)
+        if self.config.usar_sanduiche:
+            s = sinal_sanduiche(cores)
+            if s:
+                candidatos.append(s)
+
+        # Repetição Numérica
+        if self.config.usar_repeticao_numerica:
+            s = sinal_repeticao_numerica(cores, pontos)
+            if s:
+                candidatos.append(s)
+
+        # Ciclo Curto
+        if self.config.usar_ciclo_curto:
+            s = sinal_ciclo_curto(cores)
+            if s:
+                candidatos.append(s)
+
+        # Zona de TIE
+        if self.config.usar_zona_tie:
+            s = sinal_zona_tie(cores)
+            if s:
+                candidatos.append(s)
+
+        # Força de Lado
+        if self.config.usar_forca_lado:
+            s = sinal_forca_lado(cores)
+            if s:
+                candidatos.append(s)
+
+        # TIE por Intervalo
+        if self.config.usar_tie_intervalo:
+            s = sinal_tie_intervalo(cores, ultimas_n=self.config.limite_rodadas)
+            if s:
+                candidatos.append(s)
+
+        # =========================================================================
+        # FILTRO FINAL — só retorna None DEPOIS de todos os detectores
+        # =========================================================================
         if not candidatos:
             return None
 
-        # =========================================================================
-        # PRIORIZAÇÃO POR CONFIANÇA (Opção D) — bloco ÚNICO
-        # =========================================================================
+        # PRIORIZAÇÃO POR CONFIANÇA
         conf_min = self.config.confianca_minima_sinal
-
-        # Filtra candidatos abaixo da confiança mínima
         candidatos = [c for c in candidatos if c[1] >= conf_min]
 
         if not candidatos:
             return None
 
-        # Se preferir alta confiança, mantém só >80% quando disponível
+        # Prioriza alta confiança
         if self.config.priorizar_alta_confianca:
             alta = [c for c in candidatos if c[1] >= 80.0]
             if alta:
                 candidatos = alta
 
-        # Tenta confluência primeiro, se ativada
+        # Confluência
         if self.config.usar_confluencia:
             consolidado = aplicar_confluencia(
                 candidatos, self.config.confluencia_min_ratio
@@ -336,7 +382,7 @@ class BacBoWorker:
             if consolidado:
                 return consolidado
 
-        # Fallback: melhor candidato individual
+        # Melhor candidato individual
         return max(candidatos, key=lambda x: x[1])
     # ---------------------------------------------------------- envio de sinal
     def _buscar_e_enviar_sinal(

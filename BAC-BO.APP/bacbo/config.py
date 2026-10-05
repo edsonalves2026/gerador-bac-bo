@@ -58,7 +58,7 @@ class BacBoConfig:
     usar_ciclo_curto: bool = False
     usar_zona_tie: bool = False
     usar_forca_lado: bool = False
-    usar_tie_intervalo: bool = False
+    usar_tie_intervalo: bool = True
 
     # =========================================================================
     # PRIORIZAÇÃO POR CONFIANÇA (Etapa 1)

@@ -180,6 +180,34 @@ use_espelho = st.sidebar.checkbox("Espelho", value=worker.config.usar_espelho)
 use_confl = st.sidebar.checkbox(
     "Exigir Confluência", value=worker.config.usar_confluencia
 )
+st.sidebar.markdown("**🔬 Detectores Avançados**")
+
+use_sanduiche = st.sidebar.checkbox(
+    "Sanduíche (X-Y-X)", value=worker.config.usar_sanduiche,
+    help="Detecta padrão tipo 🔴🔵🔴 e aposta na quebra",
+)
+use_rep_num = st.sidebar.checkbox(
+    "Repetição Numérica", value=worker.config.usar_repeticao_numerica,
+    help="Detecta mesmo ponto 2x seguidas",
+)
+use_ciclo = st.sidebar.checkbox(
+    "Ciclo Curto", value=worker.config.usar_ciclo_curto,
+    help="Padrões de 3 cores que se repetem",
+)
+use_zona_tie = st.sidebar.checkbox(
+    "Zona de TIE", value=worker.config.usar_zona_tie,
+    help="3+ TIE em 10 rodadas → alerta",
+)
+use_forca = st.sidebar.checkbox(
+    "Força de Lado", value=worker.config.usar_forca_lado,
+    help="Segue o lado dominante (4+ de 5)",
+)
+use_tie_intervalo = st.sidebar.checkbox(
+    "🎯 TIE por Intervalo",
+    value=worker.config.usar_tie_intervalo,
+    help="Analisa intervalos históricos entre TIE para prever o próximo",
+)
+
 use_kelly = st.sidebar.checkbox("Kelly Sizing", value=worker.config.usar_kelly)
 
 st.sidebar.markdown("**🎯 Filtro de Confiança**")
@@ -203,6 +231,13 @@ worker.update_config(
     usar_espelho=use_espelho,
     usar_confluencia=use_confl,
     usar_kelly=use_kelly,
+    # Novos detectores (Etapa 2)
+    usar_sanduiche=use_sanduiche,
+    usar_repeticao_numerica=use_rep_num,
+    usar_ciclo_curto=use_ciclo,
+    usar_zona_tie=use_zona_tie,
+    usar_forca_lado=use_forca,
+    usar_tie_intervalo=use_tie_intervalo,
 )
 
 # ---------- Gestão de risco ----------
