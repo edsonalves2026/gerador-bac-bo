@@ -96,7 +96,6 @@ def _detectar_auto_cor(
             )
     return None
 
-
 def _detectar_auto_num(
     pontos: List[int],
     padroes_manuais: Dict[str, Dict[str, Any]],
@@ -121,28 +120,39 @@ def _detectar_auto_num(
         f"🎯 AUTO_NUM [{chave}]: após número {ultimo}",
     )
 
-    # -------- 3b) AUTO_SEQ_* (sequências de números) --------
-    if historico_pontos:
-        for chave, item in padroes_manuais.items():
-            if not chave.startswith("AUTO_SEQ_"):
-                continue
-            if not item.get("ativo", True):
-                continue
 
-            seq = item.get("padrao") or []
-            tam = len(seq)
-            if tam == 0 or len(historico_pontos) < tam:
-                continue
+def _detectar_auto_seq(
+    pontos: List[int],
+    padroes_manuais: Dict[str, Dict[str, Any]],
+) -> Optional[Tuple[str, float, float, str]]:
+    """
+    Verifica se a sequência dos últimos pontos bate com algum AUTO_SEQ_*.
+    """
+    if not padroes_manuais or not pontos:
+        return None
 
-            # Converte os últimos pontos para string para comparar
-            ultimos_str = [str(p) for p in historico_pontos[-tam:]]
-            if ultimos_str == [str(x) for x in seq]:
-                return (
-                    item["sugestao"],
-                    90.0,
-                    90.0,
-                    f"🎯 AUTO_SEQ [{chave}]: após {'→'.join(str(x) for x in seq)}",
-                )
+    for chave, item in padroes_manuais.items():
+        if not chave.startswith("AUTO_SEQ_"):
+            continue
+        if not item.get("ativo", True):
+            continue
+
+        seq = item.get("padrao") or []
+        tam = len(seq)
+        if tam == 0 or len(pontos) < tam:
+            continue
+
+        ultimos_str = [str(p) for p in pontos[-tam:]]
+        seq_str = [str(x) for x in seq]
+        if ultimos_str == seq_str:
+            return (
+                item["sugestao"],
+                90.0,
+                90.0,
+                f"🎯 AUTO_SEQ [{chave}]: após {'→'.join(seq_str)}",
+            )
+    return None
+
 
 # =============================================================================
 # DETECTOR PRINCIPAL
@@ -210,6 +220,11 @@ def analisar_multi_amostra(
     # -------- 3) AUTO_NUM_* (último número saiu) --------
     if historico_pontos:
         r = _detectar_auto_num(historico_pontos, padroes_manuais)
+        if r:
+            return r
+    # -------- 3b) AUTO_SEQ_* (sequência de números) --------
+    if historico_pontos:
+        r = _detectar_auto_seq(historico_pontos, padroes_manuais)
         if r:
             return r
 

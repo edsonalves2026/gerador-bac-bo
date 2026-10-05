@@ -75,6 +75,7 @@ _importar_seguro("bacbo.risk", "Banca, StopRules, sugerir_unidade")
 _importar_seguro("bacbo.ui.estrategia_modal", "render_estrategia_sidebar")
 _importar_seguro("bacbo.ui.tabela_bacbo", "renderizar_tabela_bacbo")
 _importar_seguro("bacbo.ui.analise_tie", "renderizar_analise_tie")
+_importar_seguro("bacbo.persistence", "exportar_padroes, importar_padroes")
 # -----------------------------------------------------------------------------
 # Só agora os imports "de verdade"
 # -----------------------------------------------------------------------------
@@ -85,6 +86,7 @@ from bacbo.config import BacBoConfig, CoresTerminal, build_http_session, log_ter
 from bacbo.db import Database
 from bacbo.notifier import TelegramNotifier
 from bacbo.ui.analise_tie import renderizar_analise_tie
+from bacbo.persistence import exportar_padroes, importar_padroes
 from bacbo.strategies import (
     sinal_espelho,
     sinal_ponto_regressao,
@@ -283,12 +285,72 @@ if st.sidebar.button("📤 Enviar Relatório", use_container_width=True):
     ok, msg = worker.gerar_relatorio(qtd, filtro)
     (st.sidebar.success if ok else st.sidebar.warning)(msg)
 
+st.sidebar.divider()
+st.sidebar.subheader("📅 Resumo Diário")
+if st.sidebar.button("📤 Enviar Resumo Agora", use_container_width=True):
+    from bacbo.daily_report import enviar_resumo_diario
+    ok = enviar_resumo_diario(worker.db, worker.notifier)
+    if ok:
+        st.sidebar.success("✅ Resumo enviado!")
+    else:
+        st.sidebar.error("❌ Falha ao enviar")
 
 # =============================================================================
 # 🎯 ESTRATÉGIA PERSONALIZADA (com modal/formulário próprio)
 # =============================================================================
 render_estrategia_sidebar(worker)
 
+# ---------- 💾 Export / Import de Padrões ----------
+with st.sidebar.expander("💾 Backup de Padrões"):
+    st.caption("Salva/restaura padrões e ranking em JSON")
+
+    # --- Export ---
+    if st.button("📤 Exportar Padrões", use_container_width=True, key="btn_export"):
+        resultado = exportar_padroes(worker.db, "padroes_export.json")
+        if resultado.get("sucesso"):
+            st.success(f"✅ Salvo em `padroes_export.json`")
+            st.caption(
+                f"{resultado['total_padroes']} padrões · "
+                f"{resultado['total_ranking']} rankings"
+            )
+            # Oferece download
+            try:
+                with open("padroes_export.json", "r", encoding="utf-8") as f:
+                    st.download_button(
+                        "⬇️ Baixar arquivo",
+                        data=f.read(),
+                        file_name=f"padroes_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+                        mime="application/json",
+                        use_container_width=True,
+                    )
+            except Exception:
+                pass
+        else:
+            st.error(f"❌ {resultado.get('erro')}")
+
+    # --- Import ---
+    st.markdown("---")
+    arquivo_up = st.file_uploader(
+        "📥 Importar Padrões (JSON)",
+        type=["json"],
+        key="upload_padroes",
+    )
+    if arquivo_up is not None:
+        if st.button("📥 Importar", use_container_width=True, key="btn_import"):
+            # Salva o upload em disco temporário
+            with open("padroes_import.json", "wb") as f:
+                f.write(arquivo_up.getbuffer())
+
+            resultado = importar_padroes(worker.db, "padroes_import.json")
+            if resultado.get("sucesso"):
+                imp = resultado["importados"]
+                st.success(
+                    f"✅ Importados: {imp['padroes']} padrões · "
+                    f"{imp['ranking']} rankings · {imp['contexto']} contextos"
+                )
+                st.rerun()
+            else:
+                st.error(f"❌ {resultado.get('erro')}")
 
 # =============================================================================
 # 📊 ANÁLISE ESTATÍSTICA — filtros + resultados

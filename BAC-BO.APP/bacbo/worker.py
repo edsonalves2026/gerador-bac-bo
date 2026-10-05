@@ -7,7 +7,7 @@ from zoneinfo import ZoneInfo
 TZ_BR = ZoneInfo("America/Sao_Paulo")
 
 from typing import Any, Dict, List, Optional, Tuple
-
+from .daily_report import DailyReporterThread
 from .analysis import analisar_multi_amostra, processar_filtro_digitado
 from .analysis_service import AnalysisService
 from .config import BacBoConfig, CoresTerminal, log_terminal
@@ -44,7 +44,8 @@ class BacBoWorker:
         self.notifier = notifier
         self.db = db
         self.config = config or BacBoConfig()
-
+        # Reporter diário
+        self.daily_reporter = DailyReporterThread(self.db, self.notifier)
         # Infra de concorrência
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
@@ -103,12 +104,13 @@ class BacBoWorker:
             self.thread.start()
         self._log("▶️ Motor iniciado.", CoresTerminal.VERDE)
         self.feed.push_info("Motor iniciado")
-
+        # Inicia o reporter diário junto com o motor
+        self.daily_reporter.start()
     def stop(self) -> None:
         with self.lock:
             self.state["bot_rodando"] = False
             self.stop_event.set()
-
+            self.daily_reporter.stop()
         self._log("⏸️ Motor pausado.", CoresTerminal.AMARELO)
         self.feed.push_info("Motor pausado")
 
