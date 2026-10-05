@@ -233,7 +233,8 @@ class BacBoWorker:
         if not self.state["sinal_ativo"]:
             # Janela horária
             if not self._dentro_janela():
-                ...
+                self.motivo_bloqueio = "⏱️ Fora da janela de operação"
+                return
                 
             # Gestão de risco
             if self.config.usar_gestao_risco:
@@ -270,7 +271,6 @@ class BacBoWorker:
 
             self._buscar_e_enviar_sinal(cores, pontos, compostos, uuid_atual)
 
-    # -------------------------------------------------------------- detecção
     def _detectar_sinais(
         self, cores: List[str], pontos: List[int], compostos: List[str]
     ) -> Optional[tuple]:
@@ -311,6 +311,23 @@ class BacBoWorker:
         if not candidatos:
             return None
 
+        # =========================================================================
+        # PRIORIZAÇÃO POR CONFIANÇA (Opção D) — bloco ÚNICO
+        # =========================================================================
+        conf_min = self.config.confianca_minima_sinal
+
+        # Filtra candidatos abaixo da confiança mínima
+        candidatos = [c for c in candidatos if c[1] >= conf_min]
+
+        if not candidatos:
+            return None
+
+        # Se preferir alta confiança, mantém só >80% quando disponível
+        if self.config.priorizar_alta_confianca:
+            alta = [c for c in candidatos if c[1] >= 80.0]
+            if alta:
+                candidatos = alta
+
         # Tenta confluência primeiro, se ativada
         if self.config.usar_confluencia:
             consolidado = aplicar_confluencia(
@@ -321,7 +338,6 @@ class BacBoWorker:
 
         # Fallback: melhor candidato individual
         return max(candidatos, key=lambda x: x[1])
-
     # ---------------------------------------------------------- envio de sinal
     def _buscar_e_enviar_sinal(
         self,

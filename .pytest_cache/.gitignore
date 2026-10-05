@@ -1,0 +1,27 @@
+﻿# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+
+# Ambientes virtuais
+.venv/
+venv/
+env/
+
+# Banco local
+bacbo.db
+*.db
+
+# Secrets
+.streamlit/secrets.toml
+secrets.toml
+
+# Temporários
+teste_api.py
+*.log
+
+# Sistema
+.DS_Store
+Thumbs.db

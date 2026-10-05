@@ -2,6 +2,7 @@
 
 from dataclasses import dataclass
 from datetime import datetime
+
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
@@ -28,7 +29,7 @@ class BacBoConfig:
     # Mesa / API
     mesa_id: str = "cc71e81d-8b56-4868-91c7-7224be543dce"
     timezone: str = "America/Sao_Paulo"
-    limite_rodadas: int = 200
+    limite_rodadas: int = 300   # ← era 200 — agora 300 (meio entre 200-500)
     timeout_api: int = 10
     timeout_telegram: int = 5
 
@@ -48,6 +49,22 @@ class BacBoConfig:
     usar_espelho: bool = False
     usar_confluencia: bool = False
     confluencia_min_ratio: float = 0.66
+
+    # =========================================================================
+    # NOVOS DETECTORES (Etapa 2 - ainda com default False para segurança)
+    # =========================================================================
+    usar_sanduiche: bool = False
+    usar_repeticao_numerica: bool = False
+    usar_ciclo_curto: bool = False
+    usar_zona_tie: bool = False
+    usar_forca_lado: bool = False
+    usar_tie_intervalo: bool = False
+
+    # =========================================================================
+    # PRIORIZAÇÃO POR CONFIANÇA (Etapa 1)
+    # =========================================================================
+    confianca_minima_sinal: float = 70.0
+    priorizar_alta_confianca: bool = True
 
     # Risco
     banca_inicial: float = 100.0

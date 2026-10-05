@@ -144,6 +144,13 @@ MINR = st.sidebar.number_input(
 )
 MESA = st.sidebar.text_input("🆔 ID da Mesa", value=worker.config.mesa_id)
 
+LIMITE_MOTOR = st.sidebar.slider(
+    "📊 Rodadas do Motor (200-500)",
+    min_value=200, max_value=500, value=worker.config.limite_rodadas, step=50,
+    help="Quantas rodadas o motor busca a cada ciclo. Maiores valores = mais histórico.",
+)
+worker.update_config(limite_rodadas=int(LIMITE_MOTOR))
+
 worker.update_config(
     mesa_id=MESA,
     intervalo_verificacao=INTERVALO,
@@ -174,6 +181,21 @@ use_confl = st.sidebar.checkbox(
     "Exigir Confluência", value=worker.config.usar_confluencia
 )
 use_kelly = st.sidebar.checkbox("Kelly Sizing", value=worker.config.usar_kelly)
+
+st.sidebar.markdown("**🎯 Filtro de Confiança**")
+conf_min = st.sidebar.slider(
+    "Confiança mínima (%)", min_value=50.0, max_value=90.0,
+    value=worker.config.confianca_minima_sinal, step=1.0,
+    help="Só envia sinal se a confiança for >= este valor",
+)
+priorizar = st.sidebar.checkbox(
+    "Priorizar >80%", value=worker.config.priorizar_alta_confianca,
+    help="Se ativo, prefere padrões de alta confiança quando disponíveis",
+)
+worker.update_config(
+    confianca_minima_sinal=float(conf_min),
+    priorizar_alta_confianca=priorizar,
+)
 
 worker.update_config(
     usar_streak_fade=use_streak,
