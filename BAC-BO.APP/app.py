@@ -3,6 +3,7 @@ import hashlib
 import os
 import sys
 import traceback
+
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -73,7 +74,7 @@ _importar_seguro("bacbo.backtest", "Backtester")
 _importar_seguro("bacbo.risk", "Banca, StopRules, sugerir_unidade")
 _importar_seguro("bacbo.ui.estrategia_modal", "render_estrategia_sidebar")
 _importar_seguro("bacbo.ui.tabela_bacbo", "renderizar_tabela_bacbo")
-
+_importar_seguro("bacbo.ui.analise_tie", "renderizar_analise_tie")
 # -----------------------------------------------------------------------------
 # Só agora os imports "de verdade"
 # -----------------------------------------------------------------------------
@@ -83,6 +84,7 @@ from bacbo.client import TipminerClient
 from bacbo.config import BacBoConfig, CoresTerminal, build_http_session, log_terminal
 from bacbo.db import Database
 from bacbo.notifier import TelegramNotifier
+from bacbo.ui.analise_tie import renderizar_analise_tie
 from bacbo.strategies import (
     sinal_espelho,
     sinal_ponto_regressao,
@@ -325,6 +327,52 @@ btn_analisar = col_f.button("🔄 Analisar", use_container_width=True)
 btn_forcar = col_g.button(
     "⚡ Forçar", use_container_width=True, help="Ignora o cache"
 )
+
+# Botão para ativar automaticamente os Top 10 padrões
+if st.sidebar.button(
+    "🚀 Ativar Top 10 Padrões",
+    use_container_width=True,
+    help="Ativa os 10 padrões mais assertivos da análise atual",
+):
+    analise_atual = st.session_state.get("_analise_atual")
+    if not analise_atual:
+        st.sidebar.warning("⚠️ Rode uma análise primeiro (botão 🔄 Analisar)")
+    else:
+        res = analise_atual["resultados"]
+        ativados = 0
+
+        # Combina cores + números + sequências
+        todos = []
+        for p in res.get("cores", []):
+            todos.append(("AUTO_COR", p))
+        for p in res.get("numeros", []):
+            todos.append(("AUTO_NUM", p))
+        for p in res.get("sequencias", []):
+            todos.append(("AUTO_SEQ", p))
+
+        # Ordena por assertividade
+        todos.sort(
+            key=lambda x: (x[1].taxa_acerto, x[1].ocorrencias),
+            reverse=True,
+        )
+        top10 = todos[:10]
+
+        for prefixo, p in top10:
+            nome = f"{prefixo}_{p.padrao}"
+            if prefixo == "AUTO_COR":
+                seq = list(p.padrao)
+            elif prefixo == "AUTO_NUM":
+                seq = [str(p.padrao)]
+            else:  # AUTO_SEQ
+                seq = p.padrao.split("→")
+            try:
+                worker.add_padrao(nome, seq, p.sugestao)
+                ativados += 1
+            except Exception as e:
+                st.sidebar.error(f"❌ Erro em {nome}: {e}")
+
+        st.sidebar.success(f"✅ {ativados} padrões ativados!")
+        st.rerun()
 
 if btn_analisar or btn_forcar:
     with st.spinner(f"Analisando últimas {num_rodadas} rodadas..."):
@@ -697,6 +745,17 @@ NUM_RODADAS_TABELA = st.slider(
     help="A API suporta até 1000+ rodadas.",
     key="tabela_num_rodadas",
 )
+
+# ---------- 🟡 Análise de TIE ----------
+st.divider()
+
+NUM_RODADAS_TIE = st.slider(
+    "🟡 Rodadas para análise de TIE",
+    min_value=100, max_value=1000, value=500, step=100,
+    key="tie_num_rodadas",
+)
+
+renderizar_analise_tie(worker, num_rodadas=int(NUM_RODADAS_TIE))
 
 # Botão opcional para forçar atualização
 col_a, col_b = st.columns([1, 5])

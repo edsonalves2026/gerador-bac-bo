@@ -121,6 +121,28 @@ def _detectar_auto_num(
         f"🎯 AUTO_NUM [{chave}]: após número {ultimo}",
     )
 
+    # -------- 3b) AUTO_SEQ_* (sequências de números) --------
+    if historico_pontos:
+        for chave, item in padroes_manuais.items():
+            if not chave.startswith("AUTO_SEQ_"):
+                continue
+            if not item.get("ativo", True):
+                continue
+
+            seq = item.get("padrao") or []
+            tam = len(seq)
+            if tam == 0 or len(historico_pontos) < tam:
+                continue
+
+            # Converte os últimos pontos para string para comparar
+            ultimos_str = [str(p) for p in historico_pontos[-tam:]]
+            if ultimos_str == [str(x) for x in seq]:
+                return (
+                    item["sugestao"],
+                    90.0,
+                    90.0,
+                    f"🎯 AUTO_SEQ [{chave}]: após {'→'.join(str(x) for x in seq)}",
+                )
 
 # =============================================================================
 # DETECTOR PRINCIPAL
