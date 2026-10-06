@@ -66,6 +66,7 @@ _importar_seguro("bacbo.patterns_analyzer", "PatternsAnalyzer")
 _importar_seguro("bacbo.stats_analyzer", "StatsAnalyzer")
 _importar_seguro("bacbo.analysis_service", "AnalysisService")
 _importar_seguro("bacbo.worker", "BacBoWorker")
+_importar_seguro("bacbo.client_iadados", "IadadosClient")
 _importar_seguro(
     "bacbo.strategies",
     "sinal_streak_fade, sinal_ponto_regressao, sinal_espelho, aplicar_confluencia",
@@ -76,6 +77,10 @@ _importar_seguro("bacbo.ui.estrategia_modal", "render_estrategia_sidebar")
 _importar_seguro("bacbo.ui.tabela_bacbo", "renderizar_tabela_bacbo")
 _importar_seguro("bacbo.ui.analise_tie", "renderizar_analise_tie")
 _importar_seguro("bacbo.persistence", "exportar_padroes, importar_padroes")
+_importar_seguro("bacbo.client_historicbet", "HistoricBetClient")
+_importar_seguro("bacbo.client_manager", "ClientManager")
+_importar_seguro("bacbo.ui.ranking_visual", "renderizar_ranking_visual")
+_importar_seguro("bacbo.ui.grade_horizontal", "renderizar_grade_horizontal")
 # -----------------------------------------------------------------------------
 # Só agora os imports "de verdade"
 # -----------------------------------------------------------------------------
@@ -87,6 +92,11 @@ from bacbo.db import Database
 from bacbo.notifier import TelegramNotifier
 from bacbo.ui.analise_tie import renderizar_analise_tie
 from bacbo.persistence import exportar_padroes, importar_padroes
+from bacbo.client_historicbet import HistoricBetClient
+from bacbo.client_manager import ClientManager
+from bacbo.ui.ranking_visual import renderizar_ranking_visual
+from bacbo.ui.grade_horizontal import renderizar_grade_horizontal
+from bacbo.client_iadados import IadadosClient
 from bacbo.strategies import (
     sinal_espelho,
     sinal_ponto_regressao,
@@ -115,14 +125,54 @@ def get_worker() -> BacBoWorker:
         st.stop()
 
     session = build_http_session()
+    config = BacBoConfig()
+
+    # Cliente principal
     client = TipminerClient(session, timeout=10)
+
+    # Cliente fallback (HistoricBet)
+    try:
+        hb_email = st.secrets.get("HISTORICBET_EMAIL", "")
+        hb_password = st.secrets.get("HISTORICBET_PASSWORD", "")
+    except Exception:
+        hb_email = os.getenv("HISTORICBET_EMAIL", "")
+        hb_password = os.getenv("HISTORICBET_PASSWORD", "")
+
+    client_historicbet = HistoricBetClient(
+        session=session,
+        email=hb_email,
+        password=hb_password,
+        timeout=10,
+    )
+
+    # Cliente fallback 2 (iadados - sem token)
+    client_iadados = IadadosClient(session=session, timeout=10)
+   
+    # Manager com fallback automático
+    client_manager = ClientManager(
+        tipminer=client,
+        historicbet=client_historicbet,
+        iadados=client_iadados,
+        max_falhas_antes_de_trocar=config.max_falhas_antes_de_trocar,
+    )
+
     notifier = TelegramNotifier(token, chat_id, session=session, timeout=5)
     db = Database("bacbo.db")
-    w = BacBoWorker(client, notifier, db, BacBoConfig())
 
-    log_terminal(f"🚀 Worker criado. Iniciando motor...", CoresTerminal.VERDE)
+    w = BacBoWorker(
+        client=client,
+        notifier=notifier,
+        db=db,
+        config=config,
+        client_manager=client_manager,   # ← Passa o manager
+    )
+
+    log_terminal("🚀 Worker criado. Iniciando motor...", CoresTerminal.VERDE)
     w.start()
-    log_terminal(f"✅ Worker iniciado. bot_rodando={w.state['bot_rodando']}", CoresTerminal.VERDE)
+    log_terminal(
+        f"✅ Worker iniciado. bot_rodando={w.state['bot_rodando']}",
+        CoresTerminal.VERDE,
+    )
 
     return w
 
@@ -175,6 +225,43 @@ if c2.button("⏸️ Pausar Robô", use_container_width=True):
 
 # ---------- Feature flags ----------
 st.sidebar.divider()
+st.sidebar.subheader("🌐 Status das APIs")
+
+if worker.client_manager:
+    stats = worker.client_manager.get_stats()
+
+    api_ativa = stats["api_ativa"]
+    st.sidebar.markdown(f"**API Ativa:** `{api_ativa}`")
+
+    # Estatísticas de cada API
+    for api_nome in stats.get("apis_disponiveis", []):
+        s = stats.get(api_nome, {})
+        if not s:
+            continue
+        icone = "🟢" if api_nome == api_ativa else "⚪"
+        st.sidebar.caption(
+            f"{icone} **{api_nome.capitalize()}**: "
+            f"{s.get('sucessos', 0)}✓ / {s.get('falhas', 0)}✗ "
+            f"(últ: {s.get('falhas_consecutivas', 0)})"
+        )
+
+    # Última troca
+    if stats.get("ultima_troca"):
+        from datetime import datetime
+        dt = datetime.fromisoformat(stats["ultima_troca"])
+        st.sidebar.caption(f"⏱️ Última troca: {dt.strftime('%H:%M:%S')}")
+
+    # Botões para forçar API (com nomes completos)
+    st.sidebar.markdown("**Forçar API:**")
+    for api_nome in stats.get("apis_disponiveis", []):
+        if st.sidebar.button(
+            f"🔧 {api_nome.capitalize()}",
+            use_container_width=True,
+            key=f"btn_api_{api_nome}",
+        ):
+            worker.client_manager.forcar_api(api_nome)
+            st.rerun()
+
 st.sidebar.subheader("🧪 Estratégias Ativas")
 use_streak = st.sidebar.checkbox("Streak Fade", value=worker.config.usar_streak_fade)
 use_ponto = st.sidebar.checkbox(
@@ -751,22 +838,7 @@ if rodar_bt:
 # ---------- Ranking ----------
 st.subheader("🏆 Ranking de Padrões")
 r = worker.calcular_ranking()
-if r:
-    st.dataframe(
-        [{
-            "Posição": f"#{i}",
-            "Padrão": it["padrao"],
-            "Acertos": it["acertos"],
-            "Total": it["total"],
-            "Assertividade": f"{it['assertividade']:.1f}%",
-        } for i, it in enumerate(r, 1)],
-        use_container_width=True, hide_index=True,
-    )
-else:
-    st.info(
-        f"⏳ Aguardando mínimo de {worker.config.min_operacoes_ranking} entradas."
-    )
-
+renderizar_ranking_visual(r)
 
 # ---------- Contexto ----------
 with st.expander("📊 Assertividade por Contexto (hora × dia)"):

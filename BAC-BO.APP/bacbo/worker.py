@@ -38,10 +38,11 @@ class BacBoWorker:
         notifier,
         db,
         config: Optional[BacBoConfig] = None,
+        client_manager=None,                       # ← ADICIONAR
     ) -> None:
-        # Dependências base PRIMEIRO
         self.client = client
         self.notifier = notifier
+        self.client_manager = client_manager       # ← agora funciona
         self.db = db
         self.config = config or BacBoConfig()
         # Reporter diário
@@ -53,7 +54,11 @@ class BacBoWorker:
 
         # Sub-serviços (após atribuir client/db)
         self.feed = FeedService(db=self.db)
-        self.analysis_service = AnalysisService(self.client, ttl_segundos=60)
+        self.analysis_service = AnalysisService(
+            self.client,
+            ttl_segundos=60,
+            client_manager=client_manager,    # ← passa o manager
+        )
 
         # Gestão de risco
         self.banca = Banca(
@@ -207,11 +212,24 @@ class BacBoWorker:
         return self.db.salvar_rodadas(mesa_id, rodadas)
 
     def _processar_rodada(self) -> None:
-        cores, uuids, pontos, compostos, exibicao = self.client.buscar_historico(
-            mesa_id=self.config.mesa_id,
-            timezone=self.config.timezone,
-            limite=self.config.limite_rodadas,
-        )
+        # Usa o ClientManager se disponível (com fallback)
+        if self.client_manager:
+            cores, uuids, pontos, compostos, exibicao = (
+                self.client_manager.buscar_historico(
+                    mesa_id=self.config.mesa_id,
+                    timezone=self.config.timezone,
+                    limite=self.config.limite_rodadas,
+                )
+            )
+        else:
+            cores, uuids, pontos, compostos, exibicao = (
+                self.client.buscar_historico(
+                    mesa_id=self.config.mesa_id,
+                    timezone=self.config.timezone,
+                    limite=self.config.limite_rodadas,
+                )
+            )
+
         if not uuids:
             return
 

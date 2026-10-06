@@ -33,6 +33,14 @@ class BacBoConfig:
     timeout_api: int = 10
     timeout_telegram: int = 5
 
+    # API Fallback
+    usar_api_fallback: bool = True
+    max_falhas_antes_de_trocar: int = 3
+    url_api_fallback: str = "https://api.historicbet.com/results"
+
+    # Cookies da HistoricBet (capturados do navegador)
+    historicbet_cookies: str = ""
+
     # Loop
     intervalo_verificacao: int = 8
 

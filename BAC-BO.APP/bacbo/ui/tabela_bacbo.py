@@ -75,17 +75,18 @@ def renderizar_tabela_bacbo(worker, num_rodadas: int = 200) -> None:
             f"= {GRADE_TOTAL} células"
         )
 
-    # ---- 1) Grade principal (22×6) ----
+    # ---- 1) Grade principal (visual horizontal) ----
     st.markdown("##### 📋 Grade Principal")
     st.caption(
-        "Nova rodada entra no **canto inferior-direito** e preenche de baixo para cima"
+        "Barras de proporção + grade visual com % por linha"
     )
-    _render_grade(
+
+    from bacbo.ui.grade_horizontal import renderizar_grade_horizontal
+    renderizar_grade_horizontal(
         cores=cores,
         pontos=pontos,
-        total_celulas=GRADE_TOTAL,
-        cols=GRADE_COLS,
-        ordem="vertical_baixo_direita_para_esquerda",
+        cols=22,
+        rows=6,
     )
 
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)

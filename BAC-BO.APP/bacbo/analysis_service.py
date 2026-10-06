@@ -1,5 +1,4 @@
 """Serviço de análise — busca histórico amplo e mantém cache."""
-
 import threading
 import time
 from typing import Any, Dict, Optional
@@ -11,19 +10,33 @@ from .stats_analyzer import StatsAnalyzer
 class AnalysisService:
     """
     Responsável por:
-      - buscar histórico amplo (500+ rodadas) na API
+      - buscar histórico amplo (500+ rodadas) via client_manager (com fallback)
       - rodar PatternsAnalyzer + StatsAnalyzer
-      - cachear por N segundos (evita re-análise a cada rerun Streamlit)
+      - cachear por N segundos
     """
 
-    def __init__(self, client, ttl_segundos: int = 60) -> None:
+    def __init__(self, client, ttl_segundos: int = 60, client_manager=None) -> None:
         self.client = client
+        self.client_manager = client_manager  # ← NOVO (opcional)
         self.ttl = ttl_segundos
         self._cache: Optional[Dict[str, Any]] = None
         self._cache_ts: float = 0.0
         self._lock = threading.RLock()
 
-    # ------------------------------------------------------------------ API
+    def _buscar(self, mesa_id: str, timezone: str, num_rodadas: int):
+        """Busca usando client_manager (se disponível) ou client direto."""
+        if self.client_manager:
+            return self.client_manager.buscar_historico(
+                mesa_id=mesa_id,
+                timezone=timezone,
+                limite=num_rodadas,
+            )
+        return self.client.buscar_historico(
+            mesa_id=mesa_id,
+            timezone=timezone,
+            limite=num_rodadas,
+        )
+
     def obter_analise(
         self,
         mesa_id: str,
@@ -35,14 +48,6 @@ class AnalysisService:
         usar_gale: int = 2,
         forcar: bool = False,
     ) -> Dict[str, Any]:
-        """
-        Retorna dict com:
-          - 'resultados': {'cores': [...], 'numeros': [...], 'sequencias': [...]}
-          - 'stats': StatsResult (painel de estatísticas)
-          - 'total_rodadas': int
-          - 'timestamp': str
-          - 'cacheado': bool
-        """
         with self._lock:
             agora = time.time()
             if not forcar and self._cache and (agora - self._cache_ts) < self.ttl:
@@ -50,10 +55,10 @@ class AnalysisService:
                 cached["cacheado"] = True
                 return cached
 
-            cores, uuids, pontos, _, _ = self.client.buscar_historico(
+            cores, uuids, pontos, _, _ = self._buscar(
                 mesa_id=mesa_id,
                 timezone=timezone,
-                limite=num_rodadas,
+                num_rodadas=num_rodadas,
             )
 
             if len(cores) < tamanho_cor + 5:
@@ -90,7 +95,6 @@ class AnalysisService:
             return self._cache
 
     def invalidar(self) -> None:
-        """Força uma nova análise na próxima chamada."""
         with self._lock:
             self._cache = None
             self._cache_ts = 0.0
