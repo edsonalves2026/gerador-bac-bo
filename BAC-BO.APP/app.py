@@ -66,13 +66,16 @@ _importar_seguro("bacbo.patterns_analyzer", "PatternsAnalyzer")
 _importar_seguro("bacbo.stats_analyzer", "StatsAnalyzer")
 _importar_seguro("bacbo.analysis_service", "AnalysisService")
 _importar_seguro("bacbo.worker", "BacBoWorker")
+_importar_seguro(
+    "bacbo.risk",
+    "Banca, BancaTie, StopRules, sugerir_unidade, sugerir_unidade_tie",
+)
 _importar_seguro("bacbo.client_iadados", "IadadosClient")
 _importar_seguro(
     "bacbo.strategies",
     "sinal_streak_fade, sinal_ponto_regressao, sinal_espelho, aplicar_confluencia",
 )
 _importar_seguro("bacbo.backtest", "Backtester")
-_importar_seguro("bacbo.risk", "Banca, StopRules, sugerir_unidade")
 _importar_seguro("bacbo.ui.estrategia_modal", "render_estrategia_sidebar")
 _importar_seguro("bacbo.ui.tabela_bacbo", "renderizar_tabela_bacbo")
 _importar_seguro("bacbo.ui.analise_tie", "renderizar_analise_tie")
@@ -296,7 +299,7 @@ use_forca = st.sidebar.checkbox(
 use_tie_intervalo = st.sidebar.checkbox(
     "🎯 TIE por Intervalo",
     value=worker.config.usar_tie_intervalo,
-    help="Analisa intervalos históricos entre TIE para prever o próximo",
+    help="Emite ALERTA informativo de TIE. Não contabiliza banca nem ranking.",
 )
 
 use_kelly = st.sidebar.checkbox("Kelly Sizing", value=worker.config.usar_kelly)
@@ -689,7 +692,12 @@ if analise:
 st.sidebar.divider()
 st.sidebar.subheader("🔬 Backtest")
 janela_min_bt = st.sidebar.number_input(
-    "Mín. histórico p/ backtest", 50, 500, 100, 10, key="bt_janela_min"
+    "Mín. histórico p/ backtest",
+    min_value=50,
+    max_value=5000,
+    value=1000,
+    step=100,
+    key="bt_janela_min",
 )
 rodar_bt = st.sidebar.button("▶️ Rodar Backtest", use_container_width=True)
 
@@ -773,6 +781,27 @@ c3.metric(
 )
 c4.metric("Padrão", state["padrao_selecionado"] or "—")
 
+# ---------- Alertas de TIE (informativo) ----------
+st.subheader("🟡 Alertas de TIE (Informativo)")
+alertas = state.get("historico_tie_alertas", [])
+at1, at2 = st.columns(2)
+at1.metric("Total de Alertas", len(alertas))
+if alertas:
+    ultimo = alertas[-1]
+    try:
+        from datetime import datetime
+        dt = datetime.fromisoformat(ultimo)
+        delta = (datetime.now() - dt).total_seconds() / 60
+        at2.metric("Último Alerta", f"há {delta:.0f} min")
+    except Exception:
+        at2.metric("Último Alerta", "—")
+else:
+    at2.metric("Último Alerta", "—")
+
+st.caption(
+    "⚠️ TIE é **informativo**. Não contabiliza banca nem ranking. "
+    "Você decide se entra ou não."
+)
 # ---------- Banca ----------
 st.subheader("💼 Banca & Risco")
 b = state["banca"]
@@ -815,16 +844,43 @@ if rodar_bt:
                 return sinal_streak_fade(c, worker.config.streak_min)
 
             def det_ponto(c, p):
-                return sinal_ponto_regressao(c, p)
+                return sinal_ponto_regressao(
+                    c, p,
+                    min_amostras=worker.config.min_amostras_ponto_regressao,
+                )
 
             def det_espelho(c, p):
                 return sinal_espelho(c)
+
+            def det_sanduiche(c, p):
+                from bacbo.strategies import sinal_sanduiche
+                return sinal_sanduiche(
+                    c,
+                    min_ocorrencias=worker.config.min_amostras_sanduiche,
+                )
+
+            def det_rep_num(c, p):
+                from bacbo.strategies import sinal_repeticao_numerica
+                return sinal_repeticao_numerica(
+                    c, p,
+                    min_ocorrencias=worker.config.min_amostras_repeticao_numerica,
+                )
+
+            def det_ciclo(c, p):
+                from bacbo.strategies import sinal_ciclo_curto
+                return sinal_ciclo_curto(
+                    c,
+                    min_ocorrencias=worker.config.min_amostras_ciclo_curto,
+                )
 
             for nome, fn in [
                 ("principal", det_principal),
                 ("streak_fade", det_streak),
                 ("ponto_regressao", det_ponto),
                 ("espelho", det_espelho),
+                ("sanduiche", det_sanduiche),
+                ("repeticao_numerica", det_rep_num),
+                ("ciclo_curto", det_ciclo),
             ]:
                 resultados.append(bt.rodar(nome, fn).resumo())
 
@@ -834,6 +890,7 @@ if rodar_bt:
             st.subheader("🔬 Resultado do Backtest")
             st.dataframe(df, use_container_width=True, hide_index=True)
 
+# TIE não tem ranking (é apenas alerta informativo)
 
 # ---------- Ranking ----------
 st.subheader("🏆 Ranking de Padrões")

@@ -1,0 +1,5 @@
+{
+    "include": ["bacbo", "tests"],
+    "extraPaths": ["."],
+    "reportMissingImports": "none"
+}

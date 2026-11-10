@@ -109,8 +109,11 @@ def sinal_tie_intervalo(
     if total_ties < 2 or media == 0:
         return None
 
-    # Se ainda está muito longe (antes da janela), não sugere
+    # Só dispara na JANELA próxima (nem cedo, nem muito atrasado)
     if ultimo < (media - tolerancia):
+        return None
+    # NOVO: não dispara se já passou MUITO da média (evita spam)
+    if ultimo > (media + 3):
         return None
 
     # Confiança: quanto mais próximo/acima da média, maior

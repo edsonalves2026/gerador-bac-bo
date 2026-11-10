@@ -1,4 +1,10 @@
-"""Motor do robô — recebe client/notifier/db por injeção."""
+"""Motor do robô — recebe client/notifier/db por injeção.
+
+📌 MODO ATUAL: TIE = ALERTA INFORMATIVO
+   - TIE não é operação, não contabiliza banca nem ranking
+   - Apenas emite alerta no feed e Telegram
+   - Banca principal opera somente 🔴/🔵
+"""
 
 import threading
 from datetime import datetime, timedelta
@@ -12,7 +18,11 @@ from .analysis import analisar_multi_amostra, processar_filtro_digitado
 from .analysis_service import AnalysisService
 from .config import BacBoConfig, CoresTerminal, log_terminal
 from .feed_service import FeedService
-from .risk import Banca, StopRules, sugerir_unidade
+from .risk import (
+    Banca,
+    StopRules,
+    sugerir_unidade,
+)
 from .strategies import (
     aplicar_confluencia,
     sinal_ciclo_curto,
@@ -24,7 +34,8 @@ from .strategies import (
     sinal_streak_fade,
     sinal_zona_tie,
 )
-from .strategies_tie import sinal_tie_intervalo 
+from .strategies_tie import sinal_tie_intervalo
+
 
 class BacBoWorker:
     MAX_LOGS = 100
@@ -38,29 +49,30 @@ class BacBoWorker:
         notifier,
         db,
         config: Optional[BacBoConfig] = None,
-        client_manager=None,                       # ← ADICIONAR
+        client_manager=None,
     ) -> None:
         self.client = client
         self.notifier = notifier
-        self.client_manager = client_manager       # ← agora funciona
+        self.client_manager = client_manager
         self.db = db
         self.config = config or BacBoConfig()
-        # Reporter diário
         self.daily_reporter = DailyReporterThread(self.db, self.notifier)
+
         # Infra de concorrência
         self.lock = threading.RLock()
         self.stop_event = threading.Event()
         self.thread: Optional[threading.Thread] = None
 
-        # Sub-serviços (após atribuir client/db)
+        # Sub-serviços
         self.feed = FeedService(db=self.db)
+        self._rodadas_desde_ultimo_tie_sinal = 999
         self.analysis_service = AnalysisService(
             self.client,
             ttl_segundos=60,
-            client_manager=client_manager,    # ← passa o manager
+            client_manager=client_manager,
         )
 
-        # Gestão de risco
+        # ⚠️ BANCA ÚNICA (TIE não tem banca própria)
         self.banca = Banca(
             inicial=self.config.banca_inicial,
             aposta_base=self.config.aposta_base,
@@ -87,6 +99,7 @@ class BacBoWorker:
             "ultimo_uuid_resultado_verificado": None,
             "historico_sinais": [],
             "historico_ciclo": [],
+            "historico_tie_alertas": [],   # ← renomeado: agora é ALERTA, não sinal
             "log_eventos": [],
             "padrao_selecionado": None,
             "ranking_padroes": {},
@@ -109,8 +122,8 @@ class BacBoWorker:
             self.thread.start()
         self._log("▶️ Motor iniciado.", CoresTerminal.VERDE)
         self.feed.push_info("Motor iniciado")
-        # Inicia o reporter diário junto com o motor
         self.daily_reporter.start()
+
     def stop(self) -> None:
         with self.lock:
             self.state["bot_rodando"] = False
@@ -131,6 +144,7 @@ class BacBoWorker:
                 **self.state,
                 "historico_sinais": list(self.state["historico_sinais"]),
                 "historico_ciclo": list(self.state["historico_ciclo"]),
+                "historico_tie_alertas": list(self.state["historico_tie_alertas"]),
                 "log_eventos": list(self.state["log_eventos"]),
                 "ranking_padroes": {
                     k: dict(v) for k, v in self.state["ranking_padroes"].items()
@@ -212,7 +226,6 @@ class BacBoWorker:
         return self.db.salvar_rodadas(mesa_id, rodadas)
 
     def _processar_rodada(self) -> None:
-        # Usa o ClientManager se disponível (com fallback)
         if self.client_manager:
             cores, uuids, pontos, compostos, exibicao = (
                 self.client_manager.buscar_historico(
@@ -243,25 +256,21 @@ class BacBoWorker:
             with self.lock:
                 self.state["ultimo_uuid_processado"] = uuid_atual
             self._log(f"Nova rodada: {exibicao[-1]}", CoresTerminal.AZUL)
+            self._rodadas_desde_ultimo_tie_sinal += 1
 
-        
         if not self.state["bot_rodando"] or not nova:
             return
 
         if self.state["sinal_ativo"]:
             self._verificar_resultado(cores[-1], pontos[-1], uuid_atual)
-            # Se o sinal foi finalizado (WIN/LOSS/TIE) nesta rodada,
-            # NÃO busca novo sinal — evita emitir 2 sinais na mesma rodada
             if not self.state["sinal_ativo"]:
                 return
 
         if not self.state["sinal_ativo"]:
-            # Janela horária
             if not self._dentro_janela():
                 self.motivo_bloqueio = "⏱️ Fora da janela de operação"
                 return
-                
-            # Gestão de risco
+
             if self.config.usar_gestao_risco:
                 motivo = self.stop_rules.avaliar(
                     self.state["historico_sinais"],
@@ -290,7 +299,6 @@ class BacBoWorker:
                     )
                     return
             else:
-                # Sem gestão de risco: limpa bloqueios que não sejam de janela
                 if self.motivo_bloqueio and "⏱️" not in self.motivo_bloqueio:
                     self.motivo_bloqueio = None
 
@@ -299,13 +307,13 @@ class BacBoWorker:
     def _detectar_sinais(
         self, cores: List[str], pontos: List[int], compostos: List[str]
     ) -> Optional[tuple]:
-        """
-        Combina o detector principal (analysis) com estratégias extras
-        (streak fade, regressão de ponto, espelho, sanduíche, repetição,
-        ciclo curto, zona TIE, força lado) e TIE por intervalo.
-        Aplica filtro de confiança e confluência.
-        """
         candidatos: List[tuple] = []
+
+        if self.config.usar_tie_intervalo:
+            s = sinal_tie_intervalo(cores, ultimas_n=self.config.limite_rodadas)
+            if s:
+                if s[0] == "🟡" and s[1] >= 92.0:
+                    candidatos.append(s)
 
         # 1) Detector principal
         sug, p30, p50, desc = analisar_multi_amostra(
@@ -315,6 +323,8 @@ class BacBoWorker:
         )
         if sug:
             conf = max(p30, p50)
+            if conf >= 100.0:
+                conf = 85.0
             candidatos.append((sug, conf, "principal", desc or ""))
 
         # 2) Streak fade
@@ -325,7 +335,10 @@ class BacBoWorker:
 
         # 3) Regressão de ponto
         if self.config.usar_ponto_regressao:
-            s = sinal_ponto_regressao(cores, pontos)
+            s = sinal_ponto_regressao(
+                cores, pontos,
+                min_amostras=self.config.min_amostras_ponto_regressao,
+            )
             if s:
                 candidatos.append(s)
 
@@ -335,66 +348,62 @@ class BacBoWorker:
             if s:
                 candidatos.append(s)
 
-        # =========================================================================
-        # 5) NOVOS DETECTORES (Etapa 2)
-        # =========================================================================
-
-        # Sanduíche (X-Y-X)
+        # 5) Sanduíche
         if self.config.usar_sanduiche:
-            s = sinal_sanduiche(cores)
+            s = sinal_sanduiche(
+                cores,
+                min_ocorrencias=self.config.min_amostras_sanduiche,
+            )
             if s:
                 candidatos.append(s)
 
-        # Repetição Numérica
+        # 6) Repetição Numérica
         if self.config.usar_repeticao_numerica:
-            s = sinal_repeticao_numerica(cores, pontos)
+            s = sinal_repeticao_numerica(
+                cores, pontos,
+                min_ocorrencias=self.config.min_amostras_repeticao_numerica,
+            )
             if s:
                 candidatos.append(s)
 
-        # Ciclo Curto
+        # 7) Ciclo Curto
         if self.config.usar_ciclo_curto:
-            s = sinal_ciclo_curto(cores)
+            s = sinal_ciclo_curto(
+                cores,
+                min_ocorrencias=self.config.min_amostras_ciclo_curto,
+            )
             if s:
                 candidatos.append(s)
 
-        # Zona de TIE
+        # 8) Zona de TIE
         if self.config.usar_zona_tie:
-            s = sinal_zona_tie(cores)
+            s = sinal_zona_tie(
+                cores,
+                min_amostras=self.config.min_amostras_zona_tie,
+            )
             if s:
                 candidatos.append(s)
 
-        # Força de Lado
+        # 9) Força de Lado
         if self.config.usar_forca_lado:
             s = sinal_forca_lado(cores)
             if s:
                 candidatos.append(s)
 
-        # TIE por Intervalo
-        if self.config.usar_tie_intervalo:
-            s = sinal_tie_intervalo(cores, ultimas_n=self.config.limite_rodadas)
-            if s:
-                candidatos.append(s)
-
-        # =========================================================================
-        # FILTRO FINAL — só retorna None DEPOIS de todos os detectores
-        # =========================================================================
         if not candidatos:
             return None
 
-        # PRIORIZAÇÃO POR CONFIANÇA
         conf_min = self.config.confianca_minima_sinal
         candidatos = [c for c in candidatos if c[1] >= conf_min]
 
         if not candidatos:
             return None
 
-        # Prioriza alta confiança
         if self.config.priorizar_alta_confianca:
             alta = [c for c in candidatos if c[1] >= 80.0]
             if alta:
                 candidatos = alta
 
-        # Confluência
         if self.config.usar_confluencia:
             consolidado = aplicar_confluencia(
                 candidatos, self.config.confluencia_min_ratio
@@ -402,9 +411,8 @@ class BacBoWorker:
             if consolidado:
                 return consolidado
 
-        # Melhor candidato individual
         return max(candidatos, key=lambda x: x[1])
-    # ---------------------------------------------------------- envio de sinal
+
     def _buscar_e_enviar_sinal(
         self,
         cores: List[str],
@@ -419,12 +427,51 @@ class BacBoWorker:
             return
 
         sugestao, confianca, fonte, descricao = sinal
-        nome = {"🔴": "🔴 BANKER", "🔵": "🔵 PLAYER", "🟡": "🟡 TIE"}[sugestao]
+        eh_tie = (sugestao == "🟡")
+
+        if eh_tie:
+            self._enviar_alerta_tie(
+                confianca=confianca,
+                fonte=fonte,
+                descricao=descricao,
+                uuid_atual=uuid_atual,
+            )
+        else:
+            self._enviar_sinal_normal(
+                sugestao=sugestao,
+                confianca=confianca,
+                fonte=fonte,
+                descricao=descricao,
+                uuid_atual=uuid_atual,
+            )
+
+    # -------------------------------------------------------------------------
+    # 📤 SINAL NORMAL (🔴 ou 🔵)
+    # -------------------------------------------------------------------------
+    def _enviar_sinal_normal(
+        self,
+        sugestao: str,
+        confianca: float,
+        fonte: str,
+        descricao: str,
+        uuid_atual: str,
+    ) -> None:
+        nome = {"🔴": "🔴 BANKER", "🔵": "🔵 PLAYER"}[sugestao]
+
         unidade = (
-            sugerir_unidade(confianca, odd=self.config.odd_alvo)
+            sugerir_unidade(
+                confianca,
+                unidades_max=self.config.unidade_max,
+                odd=self.config.odd_alvo,
+            )
             if self.config.usar_kelly
             else 1.0
         )
+        self.banca.definir_unidade(
+            unidade,
+            max_pct=self.config.max_pct_banca,
+        )
+        unidade = self.banca.unidade_atual
 
         with self.lock:
             self.state["sinal_ativo"] = True
@@ -440,7 +487,6 @@ class BacBoWorker:
             }
         self.timestamps_entradas.append(datetime.now())
 
-        # Publica no feed ao vivo
         self.feed.push_entrada(
             sugestao=sugestao,
             gale_max=self.config.max_gale,
@@ -448,7 +494,7 @@ class BacBoWorker:
         )
 
         msg = (
-            "🤖 *BAC BO PRO - SINAL VIP*\n\n"
+            "🤖 *BAC BO PRO — SINAL VIP*\n\n"
             f"🎯 *ENTRADA:* {nome}\n"
             "🛡️ *PROTEÇÃO:* 🟡 TIE\n"
             f"🔄 *GESTÃO:* Até Gale {self.config.max_gale}\n\n"
@@ -456,10 +502,8 @@ class BacBoWorker:
             f"📋 *PADRÃO:*\n`{descricao}`\n\n"
             f"📊 *Confiança:* `{confianca:.1f}%`\n"
             f"💰 *Unidade:* `{unidade:.2f}u`\n\n"
-            f"💼 *Banca:* `{self.banca.saldo:.2f}u` "
-            f"({self.banca.retorno_pct:+.1f}%)\n\n"
-            f"{self._formatar_ranking_telegram()}\n\n"
-            f"{self._obter_texto_placar()}"
+            f"{self._obter_texto_placar()}\n\n"
+            f"{self._formatar_ranking_telegram()}"
         )
         if self.notifier.send(msg):
             self._log(
@@ -467,11 +511,63 @@ class BacBoWorker:
                 CoresTerminal.VERDE,
             )
 
+    # -------------------------------------------------------------------------
+    # 🟡 ALERTA DE TIE — INFORMATIVO, NÃO OPERACIONAL
+    # -------------------------------------------------------------------------
+    def _enviar_alerta_tie(
+        self,
+        confianca: float,
+        fonte: str,
+        descricao: str,
+        uuid_atual: str,
+    ) -> None:
+        """
+        Emite APENAS um alerta informativo de TIE.
+        Não contabiliza banca, não ativa sinal, não afeta nada.
+        """
+        if self._rodadas_desde_ultimo_tie_sinal < 5:
+            return
+        self._rodadas_desde_ultimo_tie_sinal = 0
+
+        with self.lock:
+            # Contador de alertas (não é operação)
+            self.state["historico_tie_alertas"].append(datetime.now().isoformat())
+            if len(self.state["historico_tie_alertas"]) > self.MAX_HISTORICO:
+                self.state["historico_tie_alertas"].pop(0)
+            self.state["ultimo_uuid_sinal_enviado"] = uuid_atual
+
+        # Feed: evento informativo (não é entrada)
+        self.feed.push_info(
+            f"🟡 ALERTA de TIE: {descricao} (conf {confianca:.0f}%)"
+        )
+
+        # Telegram: mensagem de alerta
+        msg = (
+            "🟡 *ALERTA DE TIE — INFORMATIVO*\n\n"
+            "⚠️ _Este é apenas um alerta, NÃO uma entrada._\n"
+            "Não contabiliza banca nem ranking.\n\n"
+            f"📊 *Confiança:* `{confianca:.1f}%`\n"
+            f"🔍 *Fonte:* `{fonte}`\n"
+            f"📋 *Motivo:*\n`{descricao}`\n\n"
+            "💡 _Decisão é sua. Use como referência._"
+        )
+        if self.notifier.send(msg):
+            self._log(
+                f"🟡 ALERTA TIE: conf={confianca:.1f}% | {fonte}",
+                CoresTerminal.AMARELO,
+            )
+
     # ------------------------------------------------------ verificar resultado
     def _verificar_resultado(
-        self, resultado: str, ponto: Optional[int], uuid_atual: str
+        self,
+        resultado: str,
+        ponto: Optional[int],
+        uuid_atual: str,
     ) -> None:
-        # Anti-duplicação: nunca processa a mesma rodada duas vezes
+        """
+        Verifica resultado APENAS de sinais normais (🔴/🔵).
+        TIE não tem mais fluxo de verificação (é apenas alerta).
+        """
         if uuid_atual == self.state["ultimo_uuid_sinal_enviado"]:
             return
         if uuid_atual == self.state["ultimo_uuid_resultado_verificado"]:
@@ -482,12 +578,16 @@ class BacBoWorker:
 
         esperado = self.state["sugestao_atual"]
         padrao_usado = self.state["padrao_selecionado"]
-        acertou = resultado == esperado or resultado == "🟡"
         txt = f"{resultado} ({ponto})" if ponto is not None else resultado
+
+        acertou = resultado == esperado or resultado == "🟡"
 
         if acertou:
             if resultado == "🟡":
-                tipo, header = "WIN_TIE", "🟡 *WIN_TIE (Proteção)*"
+                if self.state["tentativa"] == 2:
+                    tipo, header = "WIN_G1", "🟡 *WIN_TIE (Proteção no Gale 1)*"
+                else:
+                    tipo, header = "WIN", "🟡 *WIN_TIE (Proteção)* 🎯"
             elif self.state["tentativa"] == 1:
                 tipo, header = "WIN", "✅ *WIN DIRETO!* 🎯"
             else:
@@ -498,6 +598,7 @@ class BacBoWorker:
             self.notifier.send(
                 f"{header}\nResultado: `{txt}`\n\n{self._obter_texto_placar()}"
             )
+
             with self.lock:
                 self.state["sinal_ativo"] = False
                 self.state["padrao_selecionado"] = None
@@ -533,13 +634,14 @@ class BacBoWorker:
                     padrao, {"wins": 0, "total": 0}
                 )
                 d["total"] += 1
-                if resultado in ("WIN", "WIN_G1", "WIN_TIE"):
+                if resultado in ("WIN", "WIN_G1"):
                     d["wins"] += 1
 
-        self.banca.registrar(resultado)
+        # ⚠️ Banca principal é a ÚNICA atualizada
+        self.banca.registrar(resultado, stake=self.banca.unidade_atual)
 
         if padrao:
-            venceu = resultado in ("WIN", "WIN_G1", "WIN_TIE")
+            venceu = resultado in ("WIN", "WIN_G1")
             self.db.atualizar_ranking(padrao, venceu)
             agora = datetime.now()
             self.db.registrar_contexto(padrao, agora.hour, agora.weekday(), venceu)
@@ -583,12 +685,12 @@ class BacBoWorker:
         t = len(h)
         wd = h.count("WIN")
         wg = h.count("WIN_G1")
-        wt = h.count("WIN_TIE")
         ls = h.count("LOSS")
-        ass = ((wd + wg + wt) / t * 100) if t else 0
+        vitorias_reais = wd + wg
+        ass = (vitorias_reais / t * 100) if t else 0
         return (
             f"📊 *PLACAR ({t}):*\n"
-            f"🎯 Win: `{wd}` | 🔄 G1: `{wg}` | 🟡 Tie: `{wt}` | ❌ Loss: `{ls}`\n"
+            f"🎯 Win: `{wd}` | 🔄 G1: `{wg}` | ❌ Loss: `{ls}`\n"
             f"🚀 *Assertividade:* `{ass:.1f}%`\n"
             f"💼 *Banca:* `{self.banca.saldo:.2f}u` "
             f"({self.banca.retorno_pct:+.1f}%) | "
@@ -630,7 +732,6 @@ class BacBoWorker:
         contagem: Dict[str, Dict[str, Any]] = {}
 
         if pontos_f:
-            # ---- modo: mão gatilho por número ----
             pts = [int(p) for p in pontos_f]
             cores_alvo = []
             if "🔴 BANKER" in entradas_f:
@@ -670,7 +771,6 @@ class BacBoWorker:
                     if r2 == alvo or r2 == "🟡":
                         d["acertos_gale"] += 1
         else:
-            # ---- modo: padrões dinâmicos ----
             for i in range(self.config.tamanho_padrao, len(amostra_cores) - 1):
                 s, _, _, p = analisar_multi_amostra(
                     amostra_cores[:i],

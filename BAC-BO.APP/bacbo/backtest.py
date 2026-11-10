@@ -12,22 +12,30 @@ class BacktestResult:
     total_sinais: int = 0
     wins_direto: int = 0
     wins_gale: int = 0
+    ties: int = 0
     losses: int = 0
     max_dd_consecutivo: int = 0
     banca_final: float = 100.0
     banca_pico: float = 100.0
 
     @property
+    def total_operacoes(self) -> int:
+        """Total decisivo: exclui TIE (não é WIN nem LOSS)."""
+        return self.wins_direto + self.wins_gale + self.losses
+    
+    @property
     def win_rate(self) -> float:
-        if self.total_sinais == 0:
+        t = self.total_operacoes
+        if t == 0:
             return 0.0
-        return (self.wins_direto + self.wins_gale) / self.total_sinais * 100
+        return (self.wins_direto + self.wins_gale) / t * 100
 
     @property
     def gale_rate(self) -> float:
-        if self.total_sinais == 0:
+        t = self.total_operacoes
+        if t == 0:
             return 0.0
-        return self.wins_gale / self.total_sinais * 100
+        return self.wins_gale / t * 100
 
     @property
     def profit_pct(self) -> float:
@@ -37,6 +45,11 @@ class BacktestResult:
         return {
             "nome": self.nome,
             "total": self.total_sinais,
+            "operacoes": self.total_operacoes,
+            "wins": self.wins_direto + self.wins_gale,
+            "gales": self.wins_gale,
+            "ties": self.ties,
+            "losses": self.losses,
             "win_rate": round(self.win_rate, 1),
             "gale_rate": round(self.gale_rate, 1),
             "loss_rate": round(100 - self.win_rate, 1),
@@ -94,25 +107,39 @@ class Backtester:
 
             res.total_sinais += 1
 
-            if r1 == sugestao or r1 == "🟡":
-                if r1 == "🟡":
-                    res.wins_direto += 1
-                else:
-                    res.wins_direto += 1
-                banca.registrar("WIN_TIE" if r1 == "🟡" else "WIN", stake)
+            # WIN direto (só se a cor bater EXATAMENTE)
+            if r1 == sugestao:
+                res.wins_direto += 1
+                banca.registrar("WIN", stake)
                 loss_consec_atual = 0
-                i += 2
-            elif r2 == sugestao or r2 == "🟡":
+                i += 1                            # ← avança 1, não 2
+
+            # TIE na primeira (proteção, não conta como WIN)
+            elif r1 == "🟡":
+                banca.registrar("WIN_TIE", stake)  # delta = 0
+                loss_consec_atual = 0
+                i += 1                             # ← avança 1
+
+            # WIN no Gale 1
+            elif r2 == sugestao:
                 res.wins_gale += 1
                 banca.registrar("WIN_G1", stake)
                 loss_consec_atual = 0
-                i += 3
+                i += 2                             # ← avança 2
+
+            # TIE no Gale 1
+            elif r2 == "🟡":
+                banca.registrar("WIN_TIE", stake)
+                loss_consec_atual = 0
+                i += 2
+
+            # LOSS real
             else:
                 res.losses += 1
                 banca.registrar("LOSS", stake)
                 loss_consec_atual += 1
                 loss_consec_max = max(loss_consec_max, loss_consec_atual)
-                i += 3
+                i += 2
 
         res.banca_final = banca.saldo
         res.banca_pico = banca.pico

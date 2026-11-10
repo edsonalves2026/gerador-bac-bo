@@ -58,6 +58,16 @@ class BacBoConfig:
     usar_confluencia: bool = False
     confluencia_min_ratio: float = 0.66
 
+    # Amostra mínima por detector (evita ruído estatístico)
+    min_amostras_streak_fade: int = 20
+    min_amostras_ponto_regressao: int = 15
+    min_amostras_espelho: int = 20
+    min_amostras_sanduiche: int = 20
+    min_amostras_repeticao_numerica: int = 10
+    min_amostras_ciclo_curto: int = 20
+    min_amostras_zona_tie: int = 15
+    min_amostras_forca_lado: int = 10
+
     # =========================================================================
     # NOVOS DETECTORES (Etapa 2 - ainda com default False para segurança)
     # =========================================================================
@@ -66,12 +76,12 @@ class BacBoConfig:
     usar_ciclo_curto: bool = False
     usar_zona_tie: bool = False
     usar_forca_lado: bool = False
-    usar_tie_intervalo: bool = True
+    usar_tie_intervalo: bool = False
 
     # =========================================================================
     # PRIORIZAÇÃO POR CONFIANÇA (Etapa 1)
     # =========================================================================
-    confianca_minima_sinal: float = 70.0
+    confianca_minima_sinal: float = 80.0
     priorizar_alta_confianca: bool = True
 
     # Risco
@@ -79,8 +89,10 @@ class BacBoConfig:
     aposta_base: float = 1.0
     multiplicador_gale: float = 2.0
     usar_kelly: bool = True
-    kelly_fracao: float = 0.25
+    kelly_fracao: float = 0.15
     odd_alvo: float = 1.95
+    max_pct_banca: float = 0.02         # NOVO: máx 2% da banca por entrada
+    unidade_max: float = 2.0            # NOVO: máx 2u por entrada
 
     # Stop rules
     stop_loss_consecutivo: int = 3

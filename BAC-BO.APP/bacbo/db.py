@@ -8,6 +8,24 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 class Database:
+    # ---------- ranking TIE (separado) ----------
+    def carregar_ranking_tie(self) -> Dict[str, Dict[str, int]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT padrao, wins, total FROM tie_ranking"
+            ).fetchall()
+        return {r["padrao"]: {"wins": r["wins"], "total": r["total"]} for r in rows}
+
+    def atualizar_ranking_tie(self, padrao: str, win: bool) -> None:
+        with self._lock:
+            self._conn.execute("""
+                INSERT INTO tie_ranking (padrao, wins, total) VALUES (?, ?, 1)
+                ON CONFLICT(padrao) DO UPDATE SET
+                    wins  = wins  + ?,
+                    total = total + 1
+            """, (padrao, 1 if win else 0, 1 if win else 0))
+            self._conn.commit()
+
     def __init__(self, path: str = "bacbo.db") -> None:
         self.path = path
         self._lock = threading.RLock()
@@ -73,6 +91,11 @@ class Database:
                     wins        INTEGER DEFAULT 0,
                     total       INTEGER DEFAULT 0,
                     PRIMARY KEY (padrao, hora, dia_semana)
+                );
+                 CREATE TABLE IF NOT EXISTS tie_ranking (
+                    padrao TEXT PRIMARY KEY,
+                    wins   INTEGER DEFAULT 0,
+                    total  INTEGER DEFAULT 0
                 );
             """)
             self._conn.commit()

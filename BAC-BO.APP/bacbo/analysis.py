@@ -136,7 +136,9 @@ def _detectar_auto_seq(
             continue
         if not item.get("ativo", True):
             continue
-
+        # Só usa AUTO_COR se tiver pelo menos 15 amostras
+        if item.get("total", 0) < 15:
+            continue
         seq = item.get("padrao") or []
         tam = len(seq)
         if tam == 0 or len(pontos) < tam:
@@ -207,8 +209,8 @@ def analisar_multi_amostra(
         if fatia == padrao_fixo:
             return (
                 item["sugestao"],
-                100.0,
-                100.0,
+                85.0,
+                85.0,
                 f"📌 FIXO [{chave}]: {' | '.join(str(x) for x in padrao_fixo)}",
             )
 

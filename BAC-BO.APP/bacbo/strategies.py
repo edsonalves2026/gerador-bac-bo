@@ -34,13 +34,14 @@ def sinal_streak_fade(cores: List[str], n_min: int = 4) -> Optional[Sinal]:
     if not dominante:
         return None
     fade = "🔵" if dominante == "🔴" else "🔴"
-    return (fade, 0.60, "streak_fade", f"Fade após streak de {dominante}")
+    return (fade, 60.0, "streak_fade", f"Fade após streak de {dominante}")
 
 
 def sinal_ponto_regressao(
     cores: List[str],
     pontos: List[int],
     lookback: int = 50,
+    min_amostras: int = 20,
 ) -> Optional[Sinal]:
     if len(pontos) < 3 or pontos[-1] not in PONTOS_RAROS:
         return None
@@ -53,7 +54,7 @@ def sinal_ponto_regressao(
         if pontos_win[i] in PONTOS_RAROS:
             seguintes.append(cores_win[i + 1])
 
-    if len(seguintes) < 3:
+    if len(seguintes) < min_amostras:
         return None
 
     v = seguintes.count("🔴")
@@ -85,28 +86,28 @@ def sinal_espelho(cores: List[str], janela: int = 4) -> Optional[Sinal]:
     if ult != ult[::-1]:
         return None
     sugestao = "🔵" if ult[0] == "🔴" else "🔴"
-    return (sugestao, 0.55, "espelho", f"Espelho {' '.join(ult)}")
+    return (sugestao, 55.0, "espelho", f"Espelho {' '.join(ult)}")
 
 
 # =============================================================================
 # NOVOS DETECTORES (Etapa 2)
 # =============================================================================
 
-def sinal_sanduiche(cores: List[str], min_ocorrencias: int = 3) -> Optional[Sinal]:
+def sinal_sanduiche(cores: List[str], min_ocorrencias: int = 10) -> Optional[Sinal]:
     """Detecta padrão sanduíche (X-Y-X) nas últimas 3 rodadas."""
     if len(cores) < 5:
         return None
 
-    a, b, c = cores[-3], cores[-2], cores[-1]
-    if a == "🟡" or b == "🟡" or c == "🟡":
+    c1, c2, c3 = cores[-3], cores[-2], cores[-1]
+    if c1 == "🟡" or c2 == "🟡" or c3 == "🟡":
         return None
-    if a != c or a == b:
+    if c1 != c3 or c1 == c2:
         return None
 
     ocorrencias = 0
     votos = {"🔴": 0, "🔵": 0}
     for i in range(len(cores) - 3):
-        if cores[i] == a and cores[i + 1] == b and cores[i + 2] == a:
+        if cores[i] == c1 and cores[i + 1] == c2 and cores[i + 2] == c1:
             proximo = cores[i + 3] if i + 3 < len(cores) else None
             if proximo in ("🔴", "🔵"):
                 ocorrencias += 1
@@ -126,14 +127,14 @@ def sinal_sanduiche(cores: List[str], min_ocorrencias: int = 3) -> Optional[Sina
         cor,
         round(conf, 1),
         "sanduiche",
-        f"Sanduíche {' '.join([a, b, c])} → {cor} ({max(v, a_count)}/{v+a_count})",
+        f"Sanduíche {' '.join([c1, c2, c3])} → {cor} ({max(v, a_count)}/{v+a_count})",
     )
 
 
 def sinal_repeticao_numerica(
     cores: List[str],
     pontos: List[int],
-    min_ocorrencias: int = 3,
+    min_ocorrencias: int = 15,
 ) -> Optional[Sinal]:
     """Detecta quando o MESMO ponto sai 2x seguidas."""
     if len(pontos) < 4 or len(cores) < 4:
@@ -173,7 +174,7 @@ def sinal_repeticao_numerica(
 def sinal_ciclo_curto(
     cores: List[str],
     tamanho: int = 3,
-    min_ocorrencias: int = 3,
+    min_ocorrencias: int = 10,
 ) -> Optional[Sinal]:
     """Detecta ciclos curtos que se repetem."""
     if len(cores) < tamanho * 3:
@@ -214,6 +215,7 @@ def sinal_zona_tie(
     cores: List[str],
     min_ties_janela: int = 3,
     janela: int = 10,
+    min_amostras: int = 15,
 ) -> Optional[Sinal]:
     """Se 3+ TIE nas últimas 10 rodadas → alto risco de TIE."""
     if len(cores) < janela:
@@ -233,7 +235,7 @@ def sinal_zona_tie(
                 votos[proximo] += 1
 
     total = votos["🔴"] + votos["🔵"]
-    if total < 3:
+    if total < min_amostras:
         return None
 
     v = votos["🔴"]

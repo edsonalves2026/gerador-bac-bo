@@ -17,13 +17,7 @@ class ClientManager:
     Se um falhar N vezes seguidas, tenta o próximo.
     """
 
-    def __init__(
-        self,
-        tipminer: TipminerClient,
-        historicbet: HistoricBetClient = None,
-        iadados: IadadosClient = None,
-        max_falhas_antes_de_trocar: int = 3,
-    ) -> None:
+    def __init__(self, tipminer, historicbet=None, iadados=None, max_falhas_antes_de_trocar=3):
         self.tipminer = tipminer
         self.historicbet = historicbet
         self.iadados = iadados
@@ -39,7 +33,14 @@ class ClientManager:
             self.apis.append("iadados")
 
         self.api_ativa = "tipminer"
+        self._ciclos_desde_troca = 0
 
+        self.stats = {
+            api: {"sucessos": 0, "falhas": 0, "falhas_consecutivas": 0}
+            for api in self.apis
+        }
+
+        self.ultima_troca: Optional[datetime] = None
         # Estatísticas
         self.stats = {
             api: {"sucessos": 0, "falhas": 0, "falhas_consecutivas": 0}
@@ -49,11 +50,15 @@ class ClientManager:
         self.ultima_troca: Optional[datetime] = None
 
     # ---------------------------------------------------------------- público
-    def buscar_historico(self, **kwargs) -> Tuple[list, list, list, list, list]:
-        """
-        Busca histórico usando o cliente ativo.
-        Se falhar N vezes, tenta a próxima API na lista.
-        """
+    def buscar_historico(self, **kwargs):
+        # Tentar voltar para API primária a cada 50 ciclos
+        self._ciclos_desde_troca += 1
+        if self._ciclos_desde_troca >= 50 and self.api_ativa != self.apis[0]:
+            log_terminal("🔄 Tentando voltar para API primária...", CoresTerminal.CIANO)
+            with self.lock:
+                self.api_ativa = self.apis[0]
+            self._ciclos_desde_troca = 0
+
         with self.lock:
             idx_atual = self.apis.index(self.api_ativa)
 
