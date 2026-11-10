@@ -1,26 +1,45 @@
-
-.streamlit/secrets.toml
-
-# Seguran�a
-BAC-BO.APP/.streamlit/secrets.toml
-.streamlit/secrets.toml
-
-# Cache Python
+﻿# Python
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Pytest
-.pytest_cache/
-
-# Banco local
-bacbo.db
-*.db
-
-# Ambiente virtual
+*.py[cod]
+*.egg-info/
 .venv/
 venv/
+env/
+
+# Banco de dados
+*.db
+*.db.bak*
+*.sqlite
+*.sqlite3
+
+# Secrets e credenciais
+.env
+.env.local
+*.secrets
+secrets.toml
+.streamlit/secrets.toml
+.streamlit/secrets.json
+
+# Testes locais com credenciais
+teste_*.py
+tests/teste_*.py
+
+# Duplicados
+BAC-BO.APP/client_historicbet.py
+BAC-BO.APP/client_manager.py
+
+# IDE
+.vscode/
+.idea/
 
 # Logs
 *.log
+logs/
+
+# Backups de padrões
+padroes_export.json
+padroes_import.json
+
+# OS
+.DS_Store
+Thumbs.db
