@@ -1,6 +1,0 @@
-{
-    "python.analysis.extraPaths": ["./BAC-BO.APP"],
-    "python.analysis.diagnosticSeverityOverrides": {
-        "reportMissingImports": "none"
-    }
-}
